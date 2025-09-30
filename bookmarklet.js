@@ -175,7 +175,7 @@ class AssessmentHelper {
         };
 
         const buttonTextSpan = document.createElement("span");
-        buttonTextSpan.textContent = "Skip Article";
+        buttonTextSpan.textContent = "work smArt-er";
         buttonTextSpan.id = "getAnswerButtonText";
 
         getAnswerButton.appendChild(loadingIndicator);
@@ -996,4 +996,5 @@ class AssessmentHelper {
 }
 
 const helper = new AssessmentHelper();
+
 
