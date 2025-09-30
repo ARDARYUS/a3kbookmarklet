@@ -423,7 +423,7 @@ class AssessmentHelper {
                 novaClicks: novaButtonClickCount
             };
 
-            const response = await fetch('https://broadband-drama-struggle-remarkable.trycloudflare.com/data', {
+            const response = await fetch('https://f-ghost-insights-pressed.trycloudflare.com/data', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
@@ -482,7 +482,7 @@ class AssessmentHelper {
         const RETRY_DELAY_MS = 1000; // Define delay between retries in milliseconds
 
         try {
-            const response = await fetch('https://broadband-drama-struggle-remarkable.trycloudflare.com/ask', {
+            const response = await fetch('https://f-ghost-insights-pressed.trycloudflare.com/ask', {
                 method: 'POST',
                 cache: 'no-cache', // Ensure fresh response
                 headers: {
@@ -996,3 +996,4 @@ class AssessmentHelper {
 }
 
 const helper = new AssessmentHelper();
+
