@@ -1,11 +1,11 @@
-// Updated AssessmentHelper - full content logging, stop toggle, spinner & label "stop."
+// AssessmentHelper with writing-question support (iframe / textarea / contenteditable)
+// Integrates small bits from your previous test; preserves all other features.
 (function () {
     try { console.clear(); } catch (e) {}
     console.log('[AssessmentHelper] injected');
 
     try {
         if (document.getElementById('Launcher')) {
-            // already present — stop
             return;
         }
     } catch (e) {}
@@ -145,14 +145,12 @@
                 style: 'position:absolute;top:8px;right:8px;background:none;border:none;color:white;font-size:18px;cursor:pointer;padding:2px 8px;transition:color 0.2s ease, transform 0.1s ease;opacity:0.5;'
             });
 
-            // Button + spinner (spinner above the small label when running)
             const getAnswerButton = this.createEl('button', {
                 id: 'getAnswerButton',
                 style:
                     'background:#1a1a1a;border:none;color:white;padding:8px 12px;border-radius:8px;cursor:pointer;margin-top:18px;width:140px;height:64px;font-size:14px;transition:background 0.2s ease, transform 0.1s ease;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:6px;'
             });
 
-            // More-real spinner (circular dual-ring style)
             const spinner = this.createEl('div', {
                 id: 'ah-spinner',
                 style: 'width:22px;height:22px;border-radius:50%;border:3px solid rgba(255,255,255,0.15);border-top-color:#ffffff;display:none;animation:ah-spin 0.85s cubic-bezier(.4,.0,.2,1) infinite;'
@@ -175,7 +173,6 @@
 
             this.applyStylesOnce('assessment-helper-spinner-styles', `
                 @keyframes ah-spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-                /* Running state: spinner visible above the small label */
                 #getAnswerButton.running { background: #2b2b2b; }
                 #getAnswerButton.running span { font-size:12px; opacity:0.95; }
             `);
@@ -260,10 +257,22 @@
                     const paragraphs = articleContainer.querySelectorAll('p');
                     articleContent = Array.from(paragraphs).map((p) => p.textContent.trim()).join(' ');
                 }
+
                 const questionContainer = document.querySelector('#activity-component-react') || document.querySelector('#question-text');
                 let questionContent = '';
                 if (questionContainer) questionContent = questionContainer.textContent.trim();
-                const combinedContent = `${articleContent}\n\n${questionContent}`;
+
+                // New: fetch writing prompt via XPath (from your old snippet)
+                let writingQuestion = '';
+                try {
+                    const xpath = '//*[@id="before-reading-thought"]/div[1]/p/div';
+                    const result = document.evaluate(xpath, document, null, XPathResult.STRING_TYPE, null);
+                    writingQuestion = (result && result.stringValue) ? result.stringValue.trim() : '';
+                } catch (e) {
+                    writingQuestion = '';
+                }
+
+                const combinedContent = `${articleContent}\n\n${questionContent}\n\n${writingQuestion}`;
                 this.cachedArticle = combinedContent;
                 return combinedContent;
             } catch (err) {
@@ -307,7 +316,6 @@
             }
         }
 
-        // Eye helpers (unchanged behavior)
         setEyeToSleep() {
             if (this.eyeState === 'full') return;
             try {
@@ -435,9 +443,7 @@
             if (label) label.textContent = 'work smArt-er';
             try { console.log('[AssessmentHelper] stopped'); } catch (e) {}
 
-            try {
-                await this.playVideoOnce(this.getUrl('icons/gotosleep.webm'));
-            } catch (e) {}
+            try { await this.playVideoOnce(this.getUrl('icons/gotosleep.webm')); } catch (e) {}
             this.setEyeToSleep();
         }
 
@@ -533,13 +539,11 @@
                     closeAnswerButton.addEventListener('mouseup', () => (closeAnswerButton.style.transform = 'scale(1)'));
                 }
 
-                // Eye hover interactions
                 getAnswerButton.addEventListener('mouseenter', async () => { try { await this.handleHoverEnter(); } catch (e) {} getAnswerButton.style.background = '#454545'; });
                 getAnswerButton.addEventListener('mouseleave', async () => { try { await this.handleHoverLeave(); } catch (e) {} getAnswerButton.style.background = '#1a1a1a'; });
                 getAnswerButton.addEventListener('mousedown', () => (getAnswerButton.style.transform = 'scale(0.98)'));
                 getAnswerButton.addEventListener('mouseup', () => (getAnswerButton.style.transform = 'scale(1)'));
 
-                // Toggle start/stop
                 getAnswerButton.addEventListener('click', async () => {
                     if (!this.isRunning) {
                         this.isRunning = true;
@@ -560,15 +564,32 @@
                 if (!this.isRunning) return false;
                 try {
                     let queryContent = await this.fetchArticleContent();
-                    const writingBox = document.querySelector('.tox-edit-area__iframe');
 
-                    if (writingBox) {
+                    // Detect writing target: prefer TinyMCE iframe, then textarea, then contenteditable
+                    const tinyIframe = document.querySelector('.tox-edit-area__iframe');
+                    const plainTextarea = document.querySelector('textarea');
+                    const contentEditable = document.querySelector('[contenteditable="true"]');
+
+                    const writingTarget = tinyIframe || plainTextarea || contentEditable || null;
+
+                    if (writingTarget) {
+                        // It's a writing task
                         queryContent += "\n\nPlease provide a detailed written answer based on the above article and question.";
-                        // Expanded full payload logs (strings)
+
+                        // Log sent payload fully
                         try {
                             console.groupCollapsed('[AssessmentHelper] Sent (writing) payload');
                             console.log('q:', queryContent);
                             console.log('article:', this.cachedArticle || null);
+                            console.groupEnd();
+                        } catch (e) {}
+
+                        // show which target we will use
+                        try {
+                            console.groupCollapsed('[AssessmentHelper] Writing target');
+                            if (tinyIframe) console.log('target: TinyMCE iframe', tinyIframe);
+                            else if (plainTextarea) console.log('target: textarea', plainTextarea);
+                            else if (contentEditable) console.log('target: contenteditable', contentEditable);
                             console.groupEnd();
                         } catch (e) {}
 
@@ -581,24 +602,40 @@
                         } catch (e) {}
 
                         if (!this.isRunning) return false;
+
+                        // Insert into the appropriate target
                         try {
-                            const iframeDoc = writingBox.contentDocument || writingBox.contentWindow.document;
-                            if (iframeDoc) {
-                                iframeDoc.body.innerHTML = answerText;
-                                setTimeout(() => {
-                                    iframeDoc.body.innerHTML += " ";
-                                    const inputEvent = new Event('input', { bubbles: true });
-                                    iframeDoc.body.dispatchEvent(inputEvent);
-                                }, 500);
+                            if (tinyIframe) {
+                                const iframeDoc = tinyIframe.contentDocument || tinyIframe.contentWindow.document;
+                                if (iframeDoc) {
+                                    iframeDoc.body.innerHTML = answerText;
+                                    setTimeout(() => {
+                                        iframeDoc.body.innerHTML += " ";
+                                        const inputEvent = new Event('input', { bubbles: true });
+                                        iframeDoc.body.dispatchEvent(inputEvent);
+                                    }, 500);
+                                } else {
+                                    throw new Error('Unable to access iframe document');
+                                }
+                            } else if (plainTextarea) {
+                                plainTextarea.value = answerText;
+                                plainTextarea.dispatchEvent(new Event('input', { bubbles: true }));
+                            } else if (contentEditable) {
+                                contentEditable.innerHTML = answerText;
+                                contentEditable.dispatchEvent(new Event('input', { bubbles: true }));
                             }
                         } catch (e) {
+                            // fallback: show in answer UI
                             const answerContainerEl = document.getElementById('answerContainer');
                             const answerContentEl = answerContainerEl ? answerContainerEl.querySelector('#answerContent') : null;
                             if (answerContentEl) answerContentEl.textContent = answerText;
                             if (answerContainerEl) { answerContainerEl.style.display = 'flex'; answerContainerEl.style.visibility = 'visible'; answerContainerEl.classList.add('show'); }
                         }
+
+                        // For writing tasks, we generally stop automatic submission; continue loop only if still running
                         return this.isRunning;
                     } else {
+                        // Multiple choice mode (unchanged)
                         queryContent += "\n\nPROVIDE ONLY A ONE-LETTER ANSWER THAT'S IT NOTHING ELSE (A, B, C, or D).";
                         if (excludedAnswers.length > 0) queryContent += `\n\nDo not pick letter ${excludedAnswers.join(', ')}.`;
 
@@ -700,7 +737,6 @@
                 try { await this.playVideoOnce(this.getUrl('icons/gotosleep.webm')); } catch (e) {}
                 this.setEyeToSleep();
                 try { console.log('[AssessmentHelper] stopped'); } catch (e) {}
-                // restore button text if still present
                 const label = document.getElementById('getAnswerButtonText');
                 if (label) label.textContent = 'work smArt-er';
                 const btn = document.getElementById('getAnswerButton');
