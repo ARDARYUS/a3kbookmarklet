@@ -553,7 +553,7 @@
             } else {
                 // Fix right and expand to the left
                 const rightCss = Math.round(window.innerWidth - rect.right);
-                launcher.style.right = `${rect.right}px`;
+                launcher.style.right = `${rightCss}px`;
                 launcher.style.left = 'auto';
                 launcher.style.width = `${widthPx}px`;
             }
