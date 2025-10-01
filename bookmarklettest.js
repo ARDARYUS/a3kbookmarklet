@@ -1,4 +1,4 @@
-// AssessmentHelper — stops after successfully inserting a writing answer (no double-paste)
+// AssessmentHelper — settings expansion direction, eye preserved & shrunk top-right, button hover styles
 (function () {
     try { console.clear(); } catch (e) {}
     console.log('[AssessmentHelper] injected');
@@ -19,7 +19,7 @@
 
             this.isRunning = false;
             this.currentAbortController = null;
-            this._stoppedByWrite = false; // NEW: track if we stopped due to writing insertion
+            this._stoppedByWrite = false;
 
             this.eyeState = 'sleep';
             this.currentVideo = null;
@@ -30,6 +30,22 @@
             this.askEndpoint = 'https://f-ghost-insights-pressed.trycloudflare.com/ask';
             this.assetBase = 'https://raw.githubusercontent.com/ARDARYUS/a3kbookmarklet/main/icons/';
 
+            // Settings keys & defaults
+            this.settingsKeys = {
+                mc_wait: 'ah_mc_wait_ms',
+                mc_random_pct: 'ah_mc_random_pct'
+            };
+            this.defaults = {
+                mc_wait: 300,
+                mc_random_pct: 0
+            };
+
+            // UI state for settings: 'closed' | 'menu' | 'mc' | 'writing'
+            this.settingsState = 'closed';
+
+            // store original eye style so we can restore after settings
+            this._eyeOriginal = null;
+
             if (document.readyState === 'loading') {
                 document.addEventListener('DOMContentLoaded', () => this.init());
             } else {
@@ -37,6 +53,24 @@
             }
         }
 
+        // -------- utility: settings storage --------
+        saveSetting(key, value) {
+            try { localStorage.setItem(key, String(value)); } catch (e) {}
+        }
+        loadSetting(key, fallback) {
+            try {
+                const v = localStorage.getItem(key);
+                if (v === null || v === undefined) return fallback;
+                const n = Number(v);
+                return Number.isFinite(n) ? n : fallback;
+            } catch (e) { return fallback; }
+        }
+        getMCWait() { return this.loadSetting(this.settingsKeys.mc_wait, this.defaults.mc_wait); }
+        getMCRandomPct() { return this.loadSetting(this.settingsKeys.mc_random_pct, this.defaults.mc_random_pct); }
+        resetMCWait() { this.saveSetting(this.settingsKeys.mc_wait, this.defaults.mc_wait); }
+        resetMCRandom() { this.saveSetting(this.settingsKeys.mc_random_pct, this.defaults.mc_random_pct); }
+
+        // -------- resources & element helpers --------
         getUrl(path) {
             if (!path) return '';
             if (/^https?:\/\//i.test(path)) return path;
@@ -51,6 +85,7 @@
                 else if (k === 'dataset') Object.assign(el.dataset, props.dataset);
                 else if (k === 'children') props.children.forEach((c) => el.appendChild(c));
                 else if (k === 'text') el.textContent = props.text;
+                else if (k === 'innerHTML') el.innerHTML = props.innerHTML;
                 else el[k] = props[k];
             });
             return el;
@@ -77,6 +112,7 @@
             });
         }
 
+        // -------- init / UI creation --------
         async init() {
             try {
                 await Promise.resolve(this.loadScript(this.animeScriptUrl)).catch(() => {});
@@ -105,7 +141,7 @@
                 id: 'Launcher',
                 className: 'Launcher',
                 style:
-                    "min-height:160px;opacity:0;visibility:hidden;transition:opacity 0.5s ease;font-family:'Nunito',sans-serif;width:180px;height:240px;background:#010203;position:fixed;border-radius:12px;border:2px solid #0a0b0f;display:flex;flex-direction:column;align-items:center;color:white;font-size:16px;top:50%;right:20px;transform:translateY(-50%);z-index:99999;padding:16px;box-shadow:0 10px 8px rgba(0,0,0,0.2), 0 0 8px rgba(255,255,255,0.05);overflow:hidden;white-space:nowrap;"
+                    "min-height:160px;opacity:0;visibility:hidden;transition:opacity 0.25s ease,width 0.25s ease,font-size .12s ease;font-family:'Nunito',sans-serif;width:180px;height:240px;background:#010203;position:fixed;border-radius:12px;border:2px solid #0a0b0f;display:flex;flex-direction:column;align-items:center;color:white;font-size:16px;top:50%;right:20px;transform:translateY(-50%);z-index:99999;padding:16px;box-shadow:0 10px 8px rgba(0,0,0,0.2), 0 0 8px rgba(255,255,255,0.05);overflow:hidden;white-space:nowrap;"
             });
 
             const dragHandle = this.createEl('div', {
@@ -116,7 +152,7 @@
             const eyeWrapper = this.createEl('div', {
                 id: 'helperEye',
                 style:
-                    'width:90px;height:90px;margin-top:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;overflow:hidden;transform-style:preserve-3d;transition:transform 0.12s linear;will-change:transform;transform-origin:50% 40%;pointer-events:none;'
+                    'width:90px;height:90px;margin-top:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;overflow:hidden;transform-style:preserve-3d;transition:all 0.12s linear;will-change:transform,top,right,width,height;transform-origin:50% 40%;pointer-events:none;'
             });
 
             const uiImg = this.createEl('img', {
@@ -142,18 +178,19 @@
             const closeButton = this.createEl('button', {
                 id: 'closeButton',
                 text: '\u00D7',
-                style: 'position:absolute;top:8px;right:8px;background:none;border:none;color:white;font-size:18px;cursor:pointer;padding:2px 8px;transition:color 0.2s ease, transform 0.1s ease;opacity:0.5;'
+                style: 'position:absolute;top:8px;right:8px;background:none;border:none;color:white;font-size:18px;cursor:pointer;padding:2px 8px;transition:color 0.12s ease, transform 0.1s ease;opacity:0.5;z-index:100005;'
             });
 
+            // Main action button: style like settings buttons (colors) with hover later
             const getAnswerButton = this.createEl('button', {
                 id: 'getAnswerButton',
                 style:
-                    'background:#1a1a1a;border:none;color:white;padding:8px 12px;border-radius:8px;cursor:pointer;margin-top:18px;width:140px;height:64px;font-size:14px;transition:background 0.2s ease, transform 0.1s ease;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:6px;'
+                    'background:#151515;border:1px solid rgba(255,255,255,0.04);color:white;padding:10px 12px;border-radius:8px;cursor:pointer;margin-top:18px;width:140px;height:64px;font-size:14px;transition:background 0.14s ease, transform 0.08s ease, box-shadow 0.12s;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:6px;'
             });
 
             const spinner = this.createEl('div', {
                 id: 'ah-spinner',
-                style: 'width:22px;height:22px;border-radius:50%;border:3px solid rgba(255,255,255,0.15);border-top-color:#ffffff;display:none;animation:ah-spin 0.85s cubic-bezier(.4,.0,.2,1) infinite;'
+                style: 'width:22px;height:22px;border-radius:50%;border:3px solid rgba(255,255,255,0.12);border-top-color:#ffffff;display:none;animation:ah-spin 0.85s cubic-bezier(.4,.0,.2,1) infinite;'
             });
 
             const buttonTextSpan = this.createEl('span', { text: 'work smArt-er', id: 'getAnswerButtonText', style: 'font-size:14px;line-height:1;user-select:none;' });
@@ -161,20 +198,54 @@
             getAnswerButton.appendChild(spinner);
             getAnswerButton.appendChild(buttonTextSpan);
 
-            const version = this.createEl('div', { style: 'position:absolute;bottom:8px;right:8px;font-size:12px;opacity:0.5;', text: '1.0' });
+            // Version remains visible always
+            const version = this.createEl('div', { id: 'ah-version', style: 'position:absolute;bottom:8px;right:8px;font-size:12px;opacity:0.9;z-index:100005', text: '1.0' });
+
+            // SETTINGS COG (bottom-left)
+            const settingsCog = this.createEl('button', {
+                id: 'settingsCog',
+                title: 'Settings',
+                innerHTML: '⚙',
+                style: 'position:absolute;bottom:8px;left:8px;background:none;border:none;color:#cfcfcf;font-size:16px;cursor:pointer;opacity:0.85;padding:2px;transition:transform .12s;z-index:100005'
+            });
+
+            // BACK ARROW (same spot, initially hidden)
+            const settingsBack = this.createEl('button', {
+                id: 'settingsBack',
+                title: 'Back',
+                innerHTML: '⟵',
+                style: 'position:absolute;bottom:8px;left:8px;background:none;border:none;color:#ff4d4d;font-size:18px;cursor:pointer;opacity:0;display:none;padding:2px;transition:opacity .12s;z-index:100005'
+            });
+
+            // Settings menu container (hidden by default)
+            const settingsPanel = this.createEl('div', {
+                id: 'settingsPanel',
+                style: 'position:absolute;top:48px;left:12px;right:12px;bottom:48px;display:none;flex-direction:column;align-items:flex-start;gap:8px;overflow:auto;'
+            });
 
             launcher.appendChild(dragHandle);
             launcher.appendChild(eyeWrapper);
             launcher.appendChild(closeButton);
             launcher.appendChild(getAnswerButton);
             launcher.appendChild(version);
+            launcher.appendChild(settingsCog);
+            launcher.appendChild(settingsBack);
+            launcher.appendChild(settingsPanel);
 
             container.appendChild(launcher);
 
+            // spinner keyframes & minor styles + hover rules for buttons & settings
             this.applyStylesOnce('assessment-helper-spinner-styles', `
                 @keyframes ah-spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-                #getAnswerButton.running { background: #2b2b2b; }
+                #getAnswerButton.running { background: #1e1e1e; box-shadow: 0 4px 12px rgba(0,0,0,0.35); }
                 #getAnswerButton.running span { font-size:12px; opacity:0.95; }
+                #settingsPanel input[type="number"] { width:80px; padding:4px; border-radius:6px; border:1px solid rgba(255,255,255,0.08); background:transparent; color:white; }
+                #settingsPanel label { font-size:13px; margin-right:6px; }
+                .ah-reset { cursor:pointer; margin-left:8px; opacity:0.8; font-size:14px; user-select:none; }
+                .ah-section-title { font-weight:700; margin-top:4px; margin-bottom:6px; font-size:14px; }
+                #settingsPanel button { transition: background 0.12s ease, transform 0.08s ease; }
+                #settingsPanel button:hover { background:#222; transform: translateY(-1px); }
+                #getAnswerButton:hover { background: #1f1f1f !important; transform: translateY(-1px); }
             `);
 
             return container;
@@ -200,6 +271,7 @@
             return container;
         }
 
+        // -------- intro & show UI --------
         playIntroAnimation() {
             if (typeof anime === 'undefined') {
                 this.showUI();
@@ -235,7 +307,7 @@
             } else {
                 launcher.style.visibility = 'visible';
                 setTimeout(() => (launcher.style.opacity = 1), 10);
-                setTimeout(() => this.setupEventListeners(), 500);
+                setTimeout(() => this.setupEventListeners(), 200);
             }
         }
 
@@ -249,6 +321,7 @@
             setTimeout(() => { alertContainer.style.opacity = 0; alertContainer.addEventListener('transitionend', () => alertContainer.remove()); }, 5000);
         }
 
+        // -------- fetch article / answer --------
         async fetchArticleContent() {
             try {
                 const articleContainer = document.querySelector('#start-reading');
@@ -315,6 +388,7 @@
             }
         }
 
+        // -------- Eye helpers --------
         setEyeToSleep() {
             if (this.eyeState === 'full') return;
             try {
@@ -326,6 +400,7 @@
                 img.style.display = 'block';
                 img.src = this.getUrl('icons/sleep.gif');
                 this.eyeState = 'sleep';
+                img.style.opacity = '1';
             } catch (err) {}
         }
 
@@ -423,6 +498,7 @@
             } catch (err) {}
         }
 
+        // -------- UI start/stop --------
         async startProcessUI() {
             const btn = document.getElementById('getAnswerButton');
             const spinner = document.getElementById('ah-spinner');
@@ -454,6 +530,228 @@
             }
         }
 
+        // -------- Settings UI flows with directional expansion & eye shrink --------
+        _computeExpandRight() {
+            const launcher = document.getElementById('Launcher');
+            if (!launcher) return true;
+            const rect = launcher.getBoundingClientRect();
+            const distanceToLeft = rect.left;
+            const distanceToRight = window.innerWidth - rect.right;
+            // If closer to left edge, expand right; otherwise expand left.
+            return distanceToLeft <= distanceToRight;
+        }
+
+        _setLauncherWidthAndAnchor(widthPx, expandRight) {
+            const launcher = document.getElementById('Launcher');
+            if (!launcher) return;
+            const rect = launcher.getBoundingClientRect();
+            if (expandRight) {
+                // Fix left and expand to the right
+                launcher.style.left = `${rect.left}px`;
+                launcher.style.right = 'auto';
+                launcher.style.width = `${widthPx}px`;
+            } else {
+                // Fix right and expand to the left
+                const rightCss = Math.round(window.innerWidth - rect.right);
+                launcher.style.right = `${rightCss}px`;
+                launcher.style.left = 'auto';
+                launcher.style.width = `${widthPx}px`;
+            }
+        }
+
+        _shrinkEyeToTopRight() {
+            const eye = document.getElementById('helperEye');
+            if (!eye) return;
+            // Save original once
+            if (!this._eyeOriginal) {
+                this._eyeOriginal = {
+                    style: eye.getAttribute('style') || '',
+                    parentDisplay: eye.style.display || ''
+                };
+            }
+            // Shrink and move under the X, inside the launcher
+            eye.style.display = 'flex';
+            eye.style.position = 'absolute';
+            eye.style.top = '12px';
+            eye.style.right = '44px';
+            eye.style.width = '48px';
+            eye.style.height = '48px';
+            eye.style.marginTop = '0';
+            eye.style.zIndex = '100004';
+            // also shrink internal img
+            const img = document.getElementById('helperEyeImg');
+            if (img) img.style.width = '100%';
+        }
+
+        _restoreEyeFromShrink() {
+            const eye = document.getElementById('helperEye');
+            if (!eye) return;
+            if (this._eyeOriginal) {
+                // restore style string (safe)
+                eye.setAttribute('style', this._eyeOriginal.style);
+                this._eyeOriginal = null;
+            } else {
+                // fallback restore approximate layout
+                eye.style.position = '';
+                eye.style.top = '';
+                eye.style.right = '';
+                eye.style.width = '90px';
+                eye.style.height = '90px';
+                eye.style.marginTop = '32px';
+                eye.style.zIndex = '';
+                const img = document.getElementById('helperEyeImg');
+                if (img) img.style.width = '100%';
+            }
+        }
+
+        buildSettingsMenu() {
+            const panel = document.getElementById('settingsPanel');
+            if (!panel) return;
+            panel.innerHTML = '';
+
+            const title = this.createEl('div', { className: 'ah-section-title', text: 'Settings' });
+            panel.appendChild(title);
+
+            const mcBtn = this.createEl('button', {
+                id: 'mcSettingsBtn',
+                text: 'Multiple Choice Settings',
+                style: 'padding:10px 12px;border-radius:8px;background:#151515;border:1px solid rgba(255,255,255,0.04);color:white;cursor:pointer;'
+            });
+
+            const wrBtn = this.createEl('button', {
+                id: 'writingSettingsBtn',
+                text: 'Writing Settings',
+                style: 'padding:10px 12px;border-radius:8px;background:#151515;border:1px solid rgba(255,255,255,0.04);color:white;cursor:pointer;'
+            });
+
+            panel.appendChild(mcBtn);
+            panel.appendChild(wrBtn);
+
+            mcBtn.addEventListener('click', (e) => { e.preventDefault(); this.openMCSettings(); });
+            wrBtn.addEventListener('click', (e) => { e.preventDefault(); this.openWritingSettings(); });
+        }
+
+        openSettingsMenu() {
+            const launcher = document.getElementById('Launcher');
+            if (!launcher) return;
+            const eye = document.getElementById('helperEye');
+            const btn = document.getElementById('getAnswerButton');
+
+            // compute direction and set width to menu-size
+            const expandRight = this._computeExpandRight();
+            this._setLauncherWidthAndAnchor(360, expandRight);
+
+            // shrink eye but keep visible at top-right
+            this._shrinkEyeToTopRight();
+
+            // fade out main items except version & close & cog/back
+            if (btn) { btn.style.transition = 'opacity 0.12s'; btn.style.opacity = '0'; setTimeout(()=>btn.style.display='none',140); }
+
+            const panel = document.getElementById('settingsPanel');
+            if (panel) { panel.style.display = 'flex'; panel.style.opacity = '1'; }
+
+            // replace cog with back arrow
+            const settingsCog = document.getElementById('settingsCog');
+            const settingsBack = document.getElementById('settingsBack');
+            if (settingsCog) settingsCog.style.display = 'none';
+            if (settingsBack) { settingsBack.style.display = 'block'; settingsBack.style.opacity = '1'; }
+
+            this.settingsState = 'menu';
+            this.buildSettingsMenu();
+        }
+
+        openMCSettings() {
+            const panel = document.getElementById('settingsPanel');
+            const expandRight = this._computeExpandRight();
+            this._setLauncherWidthAndAnchor(520, expandRight);
+            if (!panel) return;
+            panel.innerHTML = '';
+            this.settingsState = 'mc';
+
+            const title = this.createEl('div', { className: 'ah-section-title', text: 'Multiple Choice Settings' });
+            panel.appendChild(title);
+
+            const waitRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;' });
+            const waitLabel = this.createEl('label', { text: 'Wait time (ms):', style: 'min-width:120px;' });
+            const waitInput = this.createEl('input', { type: 'number', id: 'mcWaitInput', value: String(this.getMCWait()), style: '' });
+            const waitReset = this.createEl('span', { className: 'ah-reset', text: '↺', title: 'Reset to default' });
+            waitReset.addEventListener('click', () => { this.resetMCWait(); waitInput.value = String(this.getMCWait()); });
+            waitInput.addEventListener('change', () => { const v = Number(waitInput.value) || this.defaults.mc_wait; this.saveSetting(this.settingsKeys.mc_wait, v); });
+
+            waitRow.appendChild(waitLabel); waitRow.appendChild(waitInput); waitRow.appendChild(waitReset);
+            panel.appendChild(waitRow);
+
+            const probRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;' });
+            const probLabel = this.createEl('label', { text: 'Random answer %:', style: 'min-width:120px;' });
+            const probInput = this.createEl('input', { type: 'number', id: 'mcRandomInput', value: String(this.getMCRandomPct()), min:0, max:100 });
+            const probReset = this.createEl('span', { className: 'ah-reset', text: '↺', title: 'Reset to default' });
+            probReset.addEventListener('click', () => { this.resetMCRandom(); probInput.value = String(this.getMCRandomPct()); });
+            probInput.addEventListener('change', () => {
+                let v = Number(probInput.value);
+                if (!Number.isFinite(v) || v < 0) v = 0;
+                if (v > 100) v = 100;
+                this.saveSetting(this.settingsKeys.mc_random_pct, v);
+                probInput.value = String(v);
+            });
+
+            probRow.appendChild(probLabel); probRow.appendChild(probInput); probRow.appendChild(probReset);
+            panel.appendChild(probRow);
+
+            const note = this.createEl('div', { text: 'Tip: set random % to >0 if you want occasional wrong answers to mimic real users.', style: 'font-size:12px;opacity:0.8;margin-top:8px;' });
+            panel.appendChild(note);
+        }
+
+        openWritingSettings() {
+            const panel = document.getElementById('settingsPanel');
+            const expandRight = this._computeExpandRight();
+            this._setLauncherWidthAndAnchor(520, expandRight);
+            this.settingsState = 'writing';
+            if (!panel) return;
+            panel.innerHTML = '';
+
+            const title = this.createEl('div', { className: 'ah-section-title', text: 'Writing Settings' });
+            panel.appendChild(title);
+
+            const placeholder = this.createEl('div', { text: 'No settings available yet for writing. This area is reserved.', style: 'font-size:13px;opacity:0.85;margin-top:6px;' });
+            panel.appendChild(placeholder);
+        }
+
+        backFromSettings() {
+            const launcher = document.getElementById('Launcher');
+            const eye = document.getElementById('helperEye');
+            const btn = document.getElementById('getAnswerButton');
+            const settingsPanel = document.getElementById('settingsPanel');
+            const settingsCog = document.getElementById('settingsCog');
+            const settingsBack = document.getElementById('settingsBack');
+
+            if (this.settingsState === 'mc' || this.settingsState === 'writing') {
+                // shrink to menu view
+                const expandRight = this._computeExpandRight();
+                this._setLauncherWidthAndAnchor(360, expandRight);
+                this.settingsState = 'menu';
+                this.buildSettingsMenu();
+                return;
+            }
+
+            if (this.settingsState === 'menu') {
+                // hide panel
+                if (settingsPanel) { settingsPanel.style.display = 'none'; settingsPanel.innerHTML = ''; }
+                // restore main button
+                if (btn) { btn.style.display = 'flex'; setTimeout(()=>btn.style.opacity='1',10); }
+                // restore cog/back
+                if (settingsBack) { settingsBack.style.opacity = '0'; setTimeout(()=>settingsBack.style.display='none',120); }
+                if (settingsCog) settingsCog.style.display = 'block';
+                // shrink launcher back (decide anchor based on current rect — restore to default 180)
+                const expandRight = this._computeExpandRight();
+                this._setLauncherWidthAndAnchor(180, expandRight);
+                // restore eye full size & original placement
+                this._restoreEyeFromShrink();
+                this.settingsState = 'closed';
+                return;
+            }
+        }
+
+        // -------- event wiring & behavior (includes settings triggers & random MC logic) --------
         setupEventListeners() {
             try {
                 const launcher = document.getElementById('Launcher');
@@ -468,7 +766,7 @@
                     #closeButton:hover, #closeAnswerButton:hover { color: #ff6b6b; opacity: 1 !important; }
                     #closeButton:active, #closeAnswerButton:active { color: #e05252; transform: scale(0.95); }
                     #getAnswerButton { position: relative; z-index: 100001; transition: background 0.2s ease, transform 0.1s ease; }
-                    #getAnswerButton:hover { background: #454545 !important; }
+                    #getAnswerButton:hover { background: #1f1f1f !important; }
                     #getAnswerButton:active { background: #4c4e5b !important; transform: scale(0.98); }
                     #getAnswerButton:disabled { opacity: 0.6; cursor: not-allowed; }
                     .answerLauncher.show { opacity: 1; visibility: visible; transform: translateY(-50%) scale(1); }
@@ -538,11 +836,12 @@
                     closeAnswerButton.addEventListener('mouseup', () => (closeAnswerButton.style.transform = 'scale(1)'));
                 }
 
-                getAnswerButton.addEventListener('mouseenter', async () => { try { await this.handleHoverEnter(); } catch (e) {} getAnswerButton.style.background = '#454545'; });
-                getAnswerButton.addEventListener('mouseleave', async () => { try { await this.handleHoverLeave(); } catch (e) {} getAnswerButton.style.background = '#1a1a1a'; });
+                getAnswerButton.addEventListener('mouseenter', async () => { try { await this.handleHoverEnter(); } catch (e) {} getAnswerButton.style.background = '#1f1f1f'; });
+                getAnswerButton.addEventListener('mouseleave', async () => { try { await this.handleHoverLeave(); } catch (e) {} getAnswerButton.style.background = '#151515'; });
                 getAnswerButton.addEventListener('mousedown', () => (getAnswerButton.style.transform = 'scale(0.98)'));
                 getAnswerButton.addEventListener('mouseup', () => (getAnswerButton.style.transform = 'scale(1)'));
 
+                // Toggle start/stop
                 getAnswerButton.addEventListener('click', async () => {
                     if (!this.isRunning) {
                         this.isRunning = true;
@@ -556,9 +855,16 @@
                     }
                 });
 
+                // Settings cog/back wiring
+                const settingsCog = document.getElementById('settingsCog');
+                const settingsBack = document.getElementById('settingsBack');
+                if (settingsCog) settingsCog.addEventListener('click', (e) => { e.preventDefault(); this.openSettingsMenu(); });
+                if (settingsBack) settingsBack.addEventListener('click', (e) => { e.preventDefault(); this.backFromSettings(); });
+
             } catch (e) {}
         }
 
+        // -------- solver loop (uses settings & random MC) --------
         async runSolverLoop() {
             const attemptOnce = async (excludedAnswers = []) => {
                 if (!this.isRunning) return false;
@@ -573,10 +879,8 @@
                     const writingTarget = tinyIframe || plainTextarea || contentEditable || null;
 
                     if (writingTarget) {
-                        // It's a writing task
                         queryContent += "\n\nPlease provide a detailed written answer based on the above article and question.";
 
-                        // Log sent payload fully
                         try {
                             console.groupCollapsed('[AssessmentHelper] Sent (writing) payload');
                             console.log('q:', queryContent);
@@ -584,7 +888,6 @@
                             console.groupEnd();
                         } catch (e) {}
 
-                        // show which target we will use
                         try {
                             console.groupCollapsed('[AssessmentHelper] Writing target');
                             if (tinyIframe) console.log('target: TinyMCE iframe', tinyIframe);
@@ -603,7 +906,6 @@
 
                         if (!this.isRunning) return false;
 
-                        // Insert into the appropriate target
                         try {
                             if (tinyIframe) {
                                 const iframeDoc = tinyIframe.contentDocument || tinyIframe.contentWindow.document;
@@ -625,26 +927,22 @@
                                 contentEditable.dispatchEvent(new Event('input', { bubbles: true }));
                             }
 
-                            // NEW BEHAVIOR: stop after successful insertion to avoid repeated pastes
+                            // stop after write insertion
                             this._stoppedByWrite = true;
                             this.isRunning = false;
-                            // Call stop UI (hide spinner, set label, play goto-sleep)
                             try { await this.stopProcessUI(); } catch (e) {}
                             return false;
                         } catch (e) {
-                            // fallback: show in answer UI
                             const answerContainerEl = document.getElementById('answerContainer');
                             const answerContentEl = answerContainerEl ? answerContainerEl.querySelector('#answerContent') : null;
-                            if (answerContentEl) answerContentEl.textContent = answerText;
+                            if (answerContentEl) answerContentEl.textContent = (typeof answerText === 'string' ? answerText : String(answerText));
                             if (answerContainerEl) { answerContainerEl.style.display = 'flex'; answerContainerEl.style.visibility = 'visible'; answerContainerEl.classList.add('show'); }
-                            // In case insertion failed, stop as well to avoid loops
                             this._stoppedByWrite = true;
                             this.isRunning = false;
                             try { await this.stopProcessUI(); } catch (e2) {}
                             return false;
                         }
                     } else {
-                        // Multiple choice mode (unchanged)
                         queryContent += "\n\nPROVIDE ONLY A ONE-LETTER ANSWER THAT'S IT NOTHING ELSE (A, B, C, or D).";
                         if (excludedAnswers.length > 0) queryContent += `\n\nDo not pick letter ${excludedAnswers.join(', ')}.`;
 
@@ -655,13 +953,41 @@
                             console.groupEnd();
                         } catch (e) {}
 
-                        const answer = await this.fetchAnswer(queryContent);
+                        const randPct = this.getMCRandomPct();
+                        let willRandom = false;
+                        try { if (randPct > 0) willRandom = (Math.random() * 100) < randPct; } catch (e) { willRandom = false; }
 
-                        try {
-                            console.groupCollapsed('[AssessmentHelper] Received (MC) answer');
-                            console.log(answer);
-                            console.groupEnd();
-                        } catch (e) {}
+                        let answer = null;
+                        if (willRandom) {
+                            const letters = ['A', 'B', 'C', 'D'].filter(l => !excludedAnswers.includes(l));
+                            const options = document.querySelectorAll('[role="radio"]');
+                            let chosenLetter = null;
+                            if (options && options.length > 0) {
+                                const available = letters.map(l => l.charCodeAt(0) - 'A'.charCodeAt(0)).filter(i => options[i]);
+                                if (available.length > 0) {
+                                    const idx = available[Math.floor(Math.random() * available.length)];
+                                    chosenLetter = String.fromCharCode('A'.charCodeAt(0) + idx);
+                                } else {
+                                    chosenLetter = letters[Math.floor(Math.random() * letters.length)];
+                                }
+                            } else {
+                                chosenLetter = letters[Math.floor(Math.random() * letters.length)];
+                            }
+                            answer = chosenLetter;
+                            try {
+                                console.groupCollapsed('[AssessmentHelper] Random MC decision');
+                                console.log('Random decision triggered (pct):', randPct);
+                                console.log('Chosen letter:', chosenLetter);
+                                console.groupEnd();
+                            } catch (e) {}
+                        } else {
+                            answer = await this.fetchAnswer(queryContent);
+                            try {
+                                console.groupCollapsed('[AssessmentHelper] Received (MC) answer');
+                                console.log(answer);
+                                console.groupEnd();
+                            } catch (e) {}
+                        }
 
                         if (!this.isRunning) return false;
 
@@ -737,10 +1063,10 @@
                     const cont = await attemptOnce();
                     if (!this.isRunning) break;
                     if (!cont) break;
-                    await new Promise(r => setTimeout(r, 300));
+                    const waitMs = Number(this.getMCWait()) || this.defaults.mc_wait;
+                    await new Promise(r => setTimeout(r, waitMs));
                 }
             } finally {
-                // If we already performed stop UI because of write insertion, skip double actions
                 if (!this._stoppedByWrite) {
                     this.isRunning = false;
                     const spinnerEl = document.getElementById('ah-spinner');
@@ -753,7 +1079,6 @@
                     const btn = document.getElementById('getAnswerButton');
                     if (btn) btn.classList.remove('running');
                 } else {
-                    // Reset flag for future runs
                     this._stoppedByWrite = false;
                 }
             }
