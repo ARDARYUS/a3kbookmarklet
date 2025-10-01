@@ -1,15 +1,17 @@
-// Bookmarklet-friendly AssessmentHelper (telemetry removed)
-// - UI / eye behavior kept from your extension's content.js
-// - No star effect, no Discord code
-// - No telemetry (/data) calls
-// - Keeps article scraping, sends article+question to /ask, receives answers, automates MC selection & navigation
-// - Dynamically loads anime.js and draggabilly if needed
-// - Eye assets loaded from ARDARYUS/a3kbookmarklet/icons (raw.githubusercontent)
+// Bookmarklet-friendly AssessmentHelper (toggle start/stop, spinner, sleep-on-stop, simplified logs)
+// Paste into bookmarklet or run in page.
 
 (function () {
+    // Clear old logs and announce injection
+    try { console.clear(); } catch (e) {}
+    console.log('[AssessmentHelper] injected');
+
     // Top-level guard
     try {
-        if (document.getElementById('Launcher')) return;
+        if (document.getElementById('Launcher')) {
+            console.log('[AssessmentHelper] already present — aborting injection');
+            return;
+        }
     } catch (err) {}
 
     class AssessmentHelper {
@@ -21,6 +23,10 @@
             this.cachedArticle = null;
             this.isFetchingAnswer = false;
 
+            // Run control
+            this.isRunning = false; // toggled by button
+            this.currentAbortController = null; // for aborting fetches
+
             // Eye / video state
             this.eyeState = 'sleep';
             this.currentVideo = null;
@@ -29,7 +35,7 @@
             this.animeScriptUrl = 'https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js';
             this.draggabillyScriptUrl = 'https://unpkg.com/draggabilly@3/dist/draggabilly.pkgd.min.js';
 
-            // Backend endpoints (your Cloudflare host)
+            // Backend endpoint
             this.askEndpoint = 'https://f-ghost-insights-pressed.trycloudflare.com/ask';
 
             // Asset base (raw GitHub)
@@ -74,7 +80,6 @@
 
         loadScript(url) {
             return new Promise((resolve, reject) => {
-                // Check if already loaded
                 const existing = Array.from(document.getElementsByTagName('script')).find(s => s.src && s.src.indexOf(url) !== -1);
                 if (existing) return resolve();
                 const script = document.createElement('script');
@@ -88,7 +93,7 @@
         /* ---------- lifecycle ---------- */
         async init() {
             try {
-                // Try to load libs but don't block UI if they fail
+                // Attempt to load libs (non-fatal)
                 await Promise.resolve(this.loadScript(this.animeScriptUrl)).catch(() => {});
                 await Promise.resolve(this.loadScript(this.draggabillyScriptUrl)).catch(() => {});
 
@@ -110,7 +115,7 @@
             }
         }
 
-        /* ---------- UI creation (mirrors extension look) ---------- */
+        /* ---------- UI creation ---------- */
         createUI() {
             const container = this.createEl('div');
 
@@ -127,7 +132,7 @@
                 style: 'width:100%;height:24px;cursor:move;background:transparent;position:absolute;top:0;'
             });
 
-            // Eye wrapper + img + video (dynamic behavior)
+            // Eye wrapper + img + video
             const eyeWrapper = this.createEl('div', {
                 id: 'helperEye',
                 style:
@@ -160,27 +165,23 @@
                 style: 'position:absolute;top:8px;right:8px;background:none;border:none;color:white;font-size:18px;cursor:pointer;padding:2px 8px;transition:color 0.2s ease, transform 0.1s ease;opacity:0.5;'
             });
 
+            // getAnswerButton and spinner
             const getAnswerButton = this.createEl('button', {
                 id: 'getAnswerButton',
                 style:
-                    'background:#1a1a1a;border:none;color:white;padding:12px 20px;border-radius:8px;cursor:pointer;margin-top:24px;width:120px;height:44px;font-size:16px;transition:background 0.2s ease, transform 0.1s ease;display:flex;justify-content:center;align-items:center;'
+                    'background:#1a1a1a;border:none;color:white;padding:12px 20px;border-radius:8px;cursor:pointer;margin-top:24px;width:140px;height:44px;font-size:16px;transition:background 0.2s ease, transform 0.1s ease;display:flex;justify-content:center;align-items:center;gap:8px;'
             });
 
-            const loadingIndicator = this.createEl('img', {
-                id: 'loadingIndicator',
-                src: this.getUrl('icons/eyebackground.gif'),
-                alt: 'loading',
-                style: 'width:20px;height:20px;display:none;object-fit:contain;'
+            // Spinner element (CSS-based)
+            const spinner = this.createEl('div', {
+                id: 'ah-spinner',
+                style: 'width:18px;height:18px;border-radius:50%;border:2px solid rgba(255,255,255,0.2);border-top-color:#ffffff;display:none;animation:ah-spin 1s linear infinite;'
             });
-            loadingIndicator.onerror = function () {
-                this.onerror = null;
-                this.src =
-                    'data:image/svg+xml;utf8,' +
-                    encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 50 50"><path fill="none" stroke="#fff" stroke-width="4" d="M25 5 A20 20 0 0 1 45 25"/></svg>');
-            };
 
-            const buttonTextSpan = this.createEl('span', { text: 'start rebelling.', id: 'getAnswerButtonText' });
-            getAnswerButton.appendChild(loadingIndicator);
+            // Button label
+            const buttonTextSpan = this.createEl('span', { text: 'work smArt-er', id: 'getAnswerButtonText' });
+
+            getAnswerButton.appendChild(spinner);
             getAnswerButton.appendChild(buttonTextSpan);
 
             const version = this.createEl('div', { style: 'position:absolute;bottom:8px;right:8px;font-size:12px;opacity:0.5;', text: '1.0' });
@@ -192,6 +193,12 @@
             launcher.appendChild(version);
 
             container.appendChild(launcher);
+
+            // spinner CSS
+            this.applyStylesOnce('assessment-helper-spinner-styles', `
+                @keyframes ah-spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+            `);
+
             return container;
         }
 
@@ -217,7 +224,6 @@
 
         /* ---------- intro & display ---------- */
         playIntroAnimation() {
-            // If anime.js present, animate the eyebackground gif, otherwise show UI immediately
             if (typeof anime === 'undefined') {
                 this.showUI();
                 return;
@@ -289,33 +295,49 @@
             }
         }
 
-        /* ---------- backend interaction ---------- */
+        /* ---------- backend interaction with abort support ---------- */
         async fetchAnswer(queryContent, retryCount = 0) {
             const MAX_RETRIES = 3, RETRY_DELAY_MS = 1000;
+            // create a new AbortController for this fetch
             try {
+                if (this.currentAbortController) {
+                    try { this.currentAbortController.abort(); } catch (e) {}
+                }
+                this.currentAbortController = new AbortController();
+                const signal = this.currentAbortController.signal;
+
                 const response = await fetch(this.askEndpoint, {
                     method: 'POST',
                     cache: 'no-cache',
                     headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ q: queryContent, article: this.cachedArticle || null })
+                    body: JSON.stringify({ q: queryContent, article: this.cachedArticle || null }),
+                    signal
                 });
+
+                // clear controller after successful fetch
+                this.currentAbortController = null;
+
                 if (!response.ok) {
-                    const text = await response.text();
+                    const text = await response.text().catch(() => '');
                     if (response.status === 500 && text.includes("429 You exceeded your current quota") && retryCount < MAX_RETRIES) {
                         await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
                         return this.fetchAnswer(queryContent, retryCount + 1);
                     }
                     throw new Error(`API error ${response.status}: ${text}`);
                 }
-                const data = await response.json();
+                const data = await response.json().catch(() => null);
                 if (data && (data.response || data.answer)) return String(data.response || data.answer).trim();
                 return 'No answer available';
             } catch (err) {
-                return `Error: ${err.message}`;
+                // If abort, return a specific value so caller knows it was stopped
+                if (err && err.name === 'AbortError') {
+                    return '<<ABORTED>>';
+                }
+                return `Error: ${err && err.message ? err.message : String(err)}`;
             }
         }
 
-        /* ---------- Eye helpers (copied/adapted) ---------- */
+        /* ---------- Eye helpers ---------- */
         setEyeToSleep() {
             if (this.eyeState === 'full') return;
             try {
@@ -344,8 +366,9 @@
         }
 
         async handleHoverEnter() {
-            if (this.eyeState === 'full' || this.eyeState === 'idle') return;
+            if (this.eyeState === 'full') return;
             try {
+                // if currently asleep, play wakeup sequence
                 await this.playVideoOnce(this.getUrl('icons/wakeup.webm'));
                 if (this.eyeState === 'full') return;
                 const img = document.getElementById('helperEyeImg');
@@ -424,16 +447,44 @@
             } catch (err) {}
         }
 
+        /* ---------- start/stop control ---------- */
+        async startProcessUI() {
+            const btn = document.getElementById('getAnswerButton');
+            const spinner = document.getElementById('ah-spinner');
+            if (spinner) spinner.style.display = 'block';
+            // keep label 'work smArt-er' but show spinner
+            try { console.log('[AssessmentHelper] started'); } catch (e) {}
+        }
+
+        async stopProcessUI() {
+            const btn = document.getElementById('getAnswerButton');
+            const spinner = document.getElementById('ah-spinner');
+            if (spinner) spinner.style.display = 'none';
+            try { console.log('[AssessmentHelper] stopped'); } catch (e) {}
+            // play gotosleep then set sleep loop
+            try {
+                await this.playVideoOnce(this.getUrl('icons/gotosleep.webm'));
+            } catch (e) {}
+            this.setEyeToSleep();
+        }
+
+        stopProcessImmediate() {
+            // Abort any in-flight fetches and mark not running
+            this.isRunning = false;
+            if (this.currentAbortController) {
+                try { this.currentAbortController.abort(); } catch (e) {}
+                this.currentAbortController = null;
+            }
+        }
+
         /* ---------- event wiring & main behavior ---------- */
         setupEventListeners() {
             try {
                 const launcher = document.getElementById('Launcher');
                 const answerContainer = document.getElementById('answerContainer');
                 const getAnswerButton = launcher ? launcher.querySelector('#getAnswerButton') : null;
-                const loadingIndicator = getAnswerButton ? getAnswerButton.querySelector('#loadingIndicator') : null;
-                const buttonTextSpan = getAnswerButton ? getAnswerButton.querySelector('#getAnswerButtonText') : null;
 
-                if (!launcher || !answerContainer) return;
+                if (!launcher || !answerContainer || !getAnswerButton) return;
 
                 const closeButton = launcher.querySelector('#closeButton');
                 const closeAnswerButton = answerContainer.querySelector('#closeAnswerButton');
@@ -518,148 +569,215 @@
                     closeAnswerButton.addEventListener('mouseup', () => (closeAnswerButton.style.transform = 'scale(1)'));
                 }
 
-                // getAnswer interactions (eye hover + click sets full)
-                if (getAnswerButton) {
-                    getAnswerButton.addEventListener('mouseenter', async () => {
-                        if (this.eyeState === 'full' || this.eyeState === 'idle') return;
-                        try { await this.handleHoverEnter(); } catch (e) {}
-                        getAnswerButton.style.background = '#454545';
-                    });
+                // Eye hover interactions on the getAnswerButton
+                getAnswerButton.addEventListener('mouseenter', async () => {
+                    try { await this.handleHoverEnter(); } catch (e) {}
+                    getAnswerButton.style.background = '#454545';
+                });
 
-                    getAnswerButton.addEventListener('mouseleave', async () => {
-                        try { await this.handleHoverLeave(); } catch (e) {}
-                        getAnswerButton.style.background = '#1a1a1a';
-                    });
+                getAnswerButton.addEventListener('mouseleave', async () => {
+                    try { await this.handleHoverLeave(); } catch (e) {}
+                    getAnswerButton.style.background = '#1a1a1a';
+                });
 
-                    getAnswerButton.addEventListener('mousedown', () => (getAnswerButton.style.transform = 'scale(0.98)'));
-                    getAnswerButton.addEventListener('mouseup', () => (getAnswerButton.style.transform = 'scale(1)'));
+                getAnswerButton.addEventListener('mousedown', () => (getAnswerButton.style.transform = 'scale(0.98)'));
+                getAnswerButton.addEventListener('mouseup', () => (getAnswerButton.style.transform = 'scale(1)'));
 
-                    getAnswerButton.addEventListener('click', async () => {
+                // Toggle behavior: start/stop
+                getAnswerButton.addEventListener('click', async () => {
+                    if (!this.isRunning) {
+                        // Start run
+                        this.isRunning = true;
+                        await this.startProcessUI();
                         // Visual: set eye to full immediately
                         try { this.setEyeToFull(); } catch (e) {}
+                        // Begin the solver loop (non-blocking)
+                        this.runSolverLoop();
+                    } else {
+                        // Stop run
+                        // immediate abort of any in-flight fetches and prevent further steps
+                        this.stopProcessImmediate();
+                        await this.stopProcessUI();
+                    }
+                });
 
-                        if (this.isFetchingAnswer) return;
-                        this.isFetchingAnswer = true;
-                        getAnswerButton.disabled = true;
-                        if (buttonTextSpan) buttonTextSpan.style.display = 'none';
-                        if (loadingIndicator) loadingIndicator.style.display = 'block';
-
-                        // telemetry removed: no logging of button press
-
-                        const processQuestion = async (excludedAnswers = []) => {
-                            try {
-                                let queryContent = await this.fetchArticleContent();
-
-                                // If a writing editor exists, request full written answer.
-                                const writingBox = document.querySelector('.tox-edit-area__iframe');
-
-                                if (writingBox) {
-                                    queryContent += "\n\nPlease provide a detailed written answer based on the above article and question.";
-                                    const answerText = await this.fetchAnswer(queryContent);
-                                    // Try to insert into iframe if accessible
-                                    try {
-                                        const iframeDoc = writingBox.contentDocument || writingBox.contentWindow.document;
-                                        if (iframeDoc) {
-                                            iframeDoc.body.innerHTML = answerText;
-                                            setTimeout(() => {
-                                                iframeDoc.body.innerHTML += " ";
-                                                const inputEvent = new Event('input', { bubbles: true });
-                                                iframeDoc.body.dispatchEvent(inputEvent);
-                                            }, 500);
-                                        }
-                                    } catch (e) {
-                                        // If iframe is cross-origin or not accessible, just show the answer UI
-                                        const answerContainerEl = document.getElementById('answerContainer');
-                                        const answerContentEl = answerContainerEl ? answerContainerEl.querySelector('#answerContent') : null;
-                                        if (answerContentEl) answerContentEl.textContent = answerText;
-                                        if (answerContainerEl) {
-                                            answerContainerEl.style.display = 'flex';
-                                            answerContainerEl.style.visibility = 'visible';
-                                            answerContainerEl.classList.add('show');
-                                        }
-                                    }
-                                } else {
-                                    // Multiple choice mode: request single-letter
-                                    queryContent += "\n\nPROVIDE ONLY A ONE-LETTER ANSWER THAT'S IT NOTHING ELSE (A, B, C, or D).";
-                                    if (excludedAnswers.length > 0) queryContent += `\n\nDo not pick letter ${excludedAnswers.join(', ')}.`;
-
-                                    const answer = await this.fetchAnswer(queryContent);
-                                    const normalized = (answer || '').trim().toUpperCase();
-
-                                    const answerContainerEl = document.getElementById('answerContainer');
-                                    const answerContentEl = answerContainerEl ? answerContainerEl.querySelector('#answerContent') : null;
-                                    if (answerContentEl) answerContentEl.textContent = normalized || answer;
-
-                                    if (answerContainerEl) {
-                                        answerContainerEl.style.display = 'flex';
-                                        answerContainerEl.style.visibility = 'visible';
-                                        answerContainerEl.classList.add('show');
-                                    }
-
-                                    if (['A', 'B', 'C', 'D'].includes(normalized) && !excludedAnswers.includes(normalized)) {
-                                        const options = document.querySelectorAll('[role="radio"]');
-                                        const index = normalized.charCodeAt(0) - 'A'.charCodeAt(0);
-                                        if (options[index]) {
-                                            options[index].click();
-                                            await new Promise(r => setTimeout(r, 500));
-                                            const submitButton = Array.from(document.querySelectorAll('button')).find((b) => b.textContent.trim() === 'Submit');
-                                            if (submitButton) {
-                                                submitButton.click();
-                                                await new Promise(r => setTimeout(r, 1000));
-                                                const nextButton = document.getElementById('feedbackActivityFormBtn');
-                                                if (nextButton) {
-                                                    const buttonText = nextButton.textContent.trim();
-                                                    nextButton.click();
-                                                    if (buttonText === 'Try again') {
-                                                        await new Promise(r => setTimeout(r, 1000));
-                                                        if (answerContainerEl) { answerContainerEl.style.display = 'none'; answerContainerEl.classList.remove('show'); }
-                                                        await processQuestion([...excludedAnswers, normalized]);
-                                                    } else {
-                                                        await new Promise(r => setTimeout(r, 1500));
-                                                        const newQuestionRadio = document.querySelector('[role="radio"]');
-                                                        const newSubmitButton = Array.from(document.querySelectorAll('button')).find((b) => b.textContent.trim() === 'Submit');
-                                                        if (newSubmitButton && newQuestionRadio) {
-                                                            if (answerContainerEl) { answerContainerEl.style.display = 'none'; answerContainerEl.classList.remove('show'); }
-                                                            await processQuestion();
-                                                        } else {
-                                                            if (answerContentEl) answerContentEl.textContent = 'Processing complete or no more questions found.';
-                                                        }
-                                                    }
-                                                } else {
-                                                    if (answerContentEl) answerContentEl.textContent = 'Submit processed, but next step button not found.';
-                                                }
-                                            } else {
-                                                if (answerContentEl) answerContentEl.textContent = 'Error: Submit button not found.';
-                                            }
-                                        } else {
-                                            if (answerContentEl) answerContentEl.textContent = `Error: Option ${normalized} not found on page.`;
-                                        }
-                                    } else {
-                                        if (answerContentEl) answerContentEl.textContent = `Model returned: ${answer || 'No valid single letter'}`;
-                                    }
-                                }
-                            } catch (err) {
-                                const answerContainerEl = document.getElementById('answerContainer');
-                                const answerContentEl = answerContainerEl ? answerContainerEl.querySelector('#answerContent') : null;
-                                if (answerContentEl) answerContentEl.textContent = `Error: ${err.message}`;
-                                if (answerContainerEl) { answerContainerEl.style.display = 'flex'; answerContainerEl.style.visibility = 'visible'; answerContainerEl.classList.add('show'); }
-                            } finally {
-                                this.isFetchingAnswer = false;
-                                getAnswerButton.disabled = false;
-                                if (loadingIndicator) loadingIndicator.style.display = 'none';
-                                if (buttonTextSpan) buttonTextSpan.style.display = 'block';
-                            }
-                        };
-
-                        await processQuestion();
-                    });
-                }
             } catch (err) {}
         }
+
+        /* ---------- solver loop (checks isRunning) ---------- */
+        async runSolverLoop() {
+            // keep looping until isRunning is false or we detect no more questions
+            const getAnswerButton = document.getElementById('getAnswerButton');
+            const spinner = document.getElementById('ah-spinner');
+
+            const attemptOnce = async (excludedAnswers = []) => {
+                if (!this.isRunning) return false;
+                try {
+                    let queryContent = await this.fetchArticleContent();
+                    // MC vs Writing
+                    const writingBox = document.querySelector('.tox-edit-area__iframe');
+
+                    if (writingBox) {
+                        queryContent += "\n\nPlease provide a detailed written answer based on the above article and question.";
+                        // Log sent payload (expandable)
+                        try {
+                            console.groupCollapsed('[AssessmentHelper] Sent (writing) payload');
+                            console.log({ q: queryContent, article: this.cachedArticle || null });
+                            console.groupEnd();
+                        } catch (e) {}
+
+                        const answerText = await this.fetchAnswer(queryContent);
+                        // Log received (expandable)
+                        try {
+                            console.groupCollapsed('[AssessmentHelper] Received (writing) answer');
+                            console.log(answerText);
+                            console.groupEnd();
+                        } catch (e) {}
+
+                        if (!this.isRunning) return false;
+                        // attempt to insert into editor iframe
+                        try {
+                            const iframeDoc = writingBox.contentDocument || writingBox.contentWindow.document;
+                            if (iframeDoc) {
+                                iframeDoc.body.innerHTML = answerText;
+                                setTimeout(() => {
+                                    iframeDoc.body.innerHTML += " ";
+                                    const inputEvent = new Event('input', { bubbles: true });
+                                    iframeDoc.body.dispatchEvent(inputEvent);
+                                }, 500);
+                            }
+                        } catch (e) {
+                            // fallback: show in answer UI
+                            const answerContainerEl = document.getElementById('answerContainer');
+                            const answerContentEl = answerContainerEl ? answerContainerEl.querySelector('#answerContent') : null;
+                            if (answerContentEl) answerContentEl.textContent = answerText;
+                            if (answerContainerEl) { answerContainerEl.style.display = 'flex'; answerContainerEl.style.visibility = 'visible'; answerContainerEl.classList.add('show'); }
+                        }
+                        // for writing tasks, we stop after inserting (user may submit) — but continue loop only if still running
+                        return this.isRunning;
+                    } else {
+                        // MC mode
+                        queryContent += "\n\nPROVIDE ONLY A ONE-LETTER ANSWER THAT'S IT NOTHING ELSE (A, B, C, or D).";
+                        if (excludedAnswers.length > 0) queryContent += `\n\nDo not pick letter ${excludedAnswers.join(', ')}.`;
+
+                        // Log sent payload (expandable)
+                        try {
+                            console.groupCollapsed('[AssessmentHelper] Sent (MC) payload');
+                            console.log({ q: queryContent, article: this.cachedArticle || null });
+                            console.groupEnd();
+                        } catch (e) {}
+
+                        const answer = await this.fetchAnswer(queryContent);
+                        // Log received (expandable)
+                        try {
+                            console.groupCollapsed('[AssessmentHelper] Received (MC) answer');
+                            console.log(answer);
+                            console.groupEnd();
+                        } catch (e) {}
+
+                        if (!this.isRunning) return false;
+
+                        const normalized = (answer || '').trim().toUpperCase();
+                        const answerContainerEl = document.getElementById('answerContainer');
+                        const answerContentEl = answerContainerEl ? answerContainerEl.querySelector('#answerContent') : null;
+                        if (answerContentEl) answerContentEl.textContent = normalized || answer;
+                        if (answerContainerEl) { answerContainerEl.style.display = 'flex'; answerContainerEl.style.visibility = 'visible'; answerContainerEl.classList.add('show'); }
+
+                        if (['A', 'B', 'C', 'D'].includes(normalized) && !excludedAnswers.includes(normalized)) {
+                            const options = document.querySelectorAll('[role="radio"]');
+                            const index = normalized.charCodeAt(0) - 'A'.charCodeAt(0);
+                            if (options[index]) {
+                                options[index].click();
+                                // small delay for selection to register
+                                await new Promise(r => setTimeout(r, 500));
+                                if (!this.isRunning) return false;
+                                const submitButton = Array.from(document.querySelectorAll('button')).find((b) => b.textContent.trim() === 'Submit');
+                                if (submitButton) {
+                                    submitButton.click();
+                                    await new Promise(r => setTimeout(r, 1000));
+                                    if (!this.isRunning) return false;
+                                    const nextButton = document.getElementById('feedbackActivityFormBtn');
+                                    if (nextButton) {
+                                        const buttonText = nextButton.textContent.trim();
+                                        nextButton.click();
+                                        if (buttonText === 'Try again') {
+                                            // try again: call recursively with excluded answer
+                                            await new Promise(r => setTimeout(r, 1000));
+                                            if (!this.isRunning) return false;
+                                            return await attemptOnce([...excludedAnswers, normalized]);
+                                        } else {
+                                            // proceed to next question (if any)
+                                            await new Promise(r => setTimeout(r, 1500));
+                                            const newQuestionRadio = document.querySelector('[role="radio"]');
+                                            const newSubmitButton = Array.from(document.querySelectorAll('button')).find((b) => b.textContent.trim() === 'Submit');
+                                            if (newSubmitButton && newQuestionRadio) {
+                                                if (!this.isRunning) return false;
+                                                return true; // signal to continue loop
+                                            } else {
+                                                if (answerContentEl) answerContentEl.textContent = 'Processing complete or no more questions found.';
+                                                return false;
+                                            }
+                                        }
+                                    } else {
+                                        if (answerContentEl) answerContentEl.textContent = 'Submit processed, but next step button not found.';
+                                        return false;
+                                    }
+                                } else {
+                                    if (answerContentEl) answerContentEl.textContent = 'Error: Submit button not found.';
+                                    return false;
+                                }
+                            } else {
+                                if (answerContentEl) answerContentEl.textContent = `Error: Option ${normalized} not found on page.`;
+                                return false;
+                            }
+                        } else {
+                            if (answerContentEl) answerContentEl.textContent = `Model returned: ${answer || 'No valid single letter'}`;
+                            return false;
+                        }
+                    }
+                } catch (err) {
+                    // If aborted explicitly, treat as stop
+                    if (String(err && err.message || '').toLowerCase().includes('aborted') || (String(err) === 'Error: <<ABORTED>>')) {
+                        return false;
+                    }
+                    // show error in UI
+                    const answerContainerEl = document.getElementById('answerContainer');
+                    const answerContentEl = answerContainerEl ? answerContainerEl.querySelector('#answerContent') : null;
+                    if (answerContentEl) answerContentEl.textContent = `Error: ${err && err.message ? err.message : String(err)}`;
+                    if (answerContainerEl) { answerContainerEl.style.display = 'flex'; answerContainerEl.style.visibility = 'visible'; answerContainerEl.classList.add('show'); }
+                    return false;
+                }
+            };
+
+            // Loop: keep trying until process signals stop or no more questions
+            try {
+                while (this.isRunning) {
+                    const cont = await attemptOnce();
+                    if (!this.isRunning) break;
+                    if (!cont) break;
+                    // small delay before next iteration
+                    await new Promise(r => setTimeout(r, 300));
+                }
+            } finally {
+                // ensure spinner hidden and running false when we exit loop
+                this.isRunning = false;
+                const spinnerEl = document.getElementById('ah-spinner');
+                if (spinnerEl) spinnerEl.style.display = 'none';
+                // play sleep animation when stopping (unless eye is full)
+                try {
+                    await this.playVideoOnce(this.getUrl('icons/gotosleep.webm'));
+                } catch (e) {}
+                this.setEyeToSleep();
+                try { console.log('[AssessmentHelper] stopped'); } catch (e) {}
+            }
+        }
+
     }
 
     // instantiate
     try {
         new AssessmentHelper();
-    } catch (e) {}
+    } catch (e) {
+        // do nothing
+    }
 })();
