@@ -1,5 +1,4 @@
-// AssessmentHelper with writing-question support (iframe / textarea / contenteditable)
-// Integrates small bits from your previous test; preserves all other features.
+// AssessmentHelper — stops after successfully inserting a writing answer (no double-paste)
 (function () {
     try { console.clear(); } catch (e) {}
     console.log('[AssessmentHelper] injected');
@@ -20,6 +19,7 @@
 
             this.isRunning = false;
             this.currentAbortController = null;
+            this._stoppedByWrite = false; // NEW: track if we stopped due to writing insertion
 
             this.eyeState = 'sleep';
             this.currentVideo = null;
@@ -262,7 +262,6 @@
                 let questionContent = '';
                 if (questionContainer) questionContent = questionContainer.textContent.trim();
 
-                // New: fetch writing prompt via XPath (from your old snippet)
                 let writingQuestion = '';
                 try {
                     const xpath = '//*[@id="before-reading-thought"]/div[1]/p/div';
@@ -547,6 +546,7 @@
                 getAnswerButton.addEventListener('click', async () => {
                     if (!this.isRunning) {
                         this.isRunning = true;
+                        this._stoppedByWrite = false;
                         await this.startProcessUI();
                         try { this.setEyeToFull(); } catch (e) {}
                         this.runSolverLoop();
@@ -624,16 +624,25 @@
                                 contentEditable.innerHTML = answerText;
                                 contentEditable.dispatchEvent(new Event('input', { bubbles: true }));
                             }
+
+                            // NEW BEHAVIOR: stop after successful insertion to avoid repeated pastes
+                            this._stoppedByWrite = true;
+                            this.isRunning = false;
+                            // Call stop UI (hide spinner, set label, play goto-sleep)
+                            try { await this.stopProcessUI(); } catch (e) {}
+                            return false;
                         } catch (e) {
                             // fallback: show in answer UI
                             const answerContainerEl = document.getElementById('answerContainer');
                             const answerContentEl = answerContainerEl ? answerContainerEl.querySelector('#answerContent') : null;
                             if (answerContentEl) answerContentEl.textContent = answerText;
                             if (answerContainerEl) { answerContainerEl.style.display = 'flex'; answerContainerEl.style.visibility = 'visible'; answerContainerEl.classList.add('show'); }
+                            // In case insertion failed, stop as well to avoid loops
+                            this._stoppedByWrite = true;
+                            this.isRunning = false;
+                            try { await this.stopProcessUI(); } catch (e2) {}
+                            return false;
                         }
-
-                        // For writing tasks, we generally stop automatic submission; continue loop only if still running
-                        return this.isRunning;
                     } else {
                         // Multiple choice mode (unchanged)
                         queryContent += "\n\nPROVIDE ONLY A ONE-LETTER ANSWER THAT'S IT NOTHING ELSE (A, B, C, or D).";
@@ -731,16 +740,22 @@
                     await new Promise(r => setTimeout(r, 300));
                 }
             } finally {
-                this.isRunning = false;
-                const spinnerEl = document.getElementById('ah-spinner');
-                if (spinnerEl) spinnerEl.style.display = 'none';
-                try { await this.playVideoOnce(this.getUrl('icons/gotosleep.webm')); } catch (e) {}
-                this.setEyeToSleep();
-                try { console.log('[AssessmentHelper] stopped'); } catch (e) {}
-                const label = document.getElementById('getAnswerButtonText');
-                if (label) label.textContent = 'work smArt-er';
-                const btn = document.getElementById('getAnswerButton');
-                if (btn) btn.classList.remove('running');
+                // If we already performed stop UI because of write insertion, skip double actions
+                if (!this._stoppedByWrite) {
+                    this.isRunning = false;
+                    const spinnerEl = document.getElementById('ah-spinner');
+                    if (spinnerEl) spinnerEl.style.display = 'none';
+                    try { await this.playVideoOnce(this.getUrl('icons/gotosleep.webm')); } catch (e) {}
+                    this.setEyeToSleep();
+                    try { console.log('[AssessmentHelper] stopped'); } catch (e) {}
+                    const label = document.getElementById('getAnswerButtonText');
+                    if (label) label.textContent = 'work smArt-er';
+                    const btn = document.getElementById('getAnswerButton');
+                    if (btn) btn.classList.remove('running');
+                } else {
+                    // Reset flag for future runs
+                    this._stoppedByWrite = false;
+                }
             }
         }
     }
