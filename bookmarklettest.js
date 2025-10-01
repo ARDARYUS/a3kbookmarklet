@@ -1,9 +1,8 @@
-// Bookmarklet-friendly AssessmentHelper (full file) — updated endpoints
-// - UI / eye behavior taken from your extension's content.js
+// Bookmarklet-friendly AssessmentHelper (telemetry removed)
+// - UI / eye behavior kept from your extension's content.js
 // - No star effect, no Discord code
-// - No personal/device/profile scraping (no UA/os/browser/mobile detection)
+// - No telemetry (/data) calls
 // - Keeps article scraping, sends article+question to /ask, receives answers, automates MC selection & navigation
-// - Minimal event logging kept: timestamp + click count + page URL (no personal device info)
 // - Dynamically loads anime.js and draggabilly if needed
 // - Eye assets loaded from ARDARYUS/a3kbookmarklet/icons (raw.githubusercontent)
 
@@ -30,8 +29,7 @@
             this.animeScriptUrl = 'https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js';
             this.draggabillyScriptUrl = 'https://unpkg.com/draggabilly@3/dist/draggabilly.pkgd.min.js';
 
-            // Backend endpoints (REPLACED with your new Cloudflare host)
-            this.dataEndpoint = 'https://f-ghost-insights-pressed.trycloudflare.com/data';
+            // Backend endpoints (your Cloudflare host)
             this.askEndpoint = 'https://f-ghost-insights-pressed.trycloudflare.com/ask';
 
             // Asset base (raw GitHub)
@@ -129,7 +127,7 @@
                 style: 'width:100%;height:24px;cursor:move;background:transparent;position:absolute;top:0;'
             });
 
-            // Eye wrapper + img + video (dynamic behavior copied from extension)
+            // Eye wrapper + img + video (dynamic behavior)
             const eyeWrapper = this.createEl('div', {
                 id: 'helperEye',
                 style:
@@ -314,25 +312,6 @@
                 return 'No answer available';
             } catch (err) {
                 return `Error: ${err.message}`;
-            }
-        }
-
-        /* ---------- minimal event logging (no personal/device info) ---------- */
-        async logButtonEvent(novaButtonClickCount) {
-            try {
-                const payload = {
-                    event: 'nova_click',
-                    novaClicks: novaButtonClickCount,
-                    timestamp: new Date().toISOString(),
-                    page: location.href
-                };
-                await fetch(this.dataEndpoint, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-            } catch (e) {
-                // silent fail
             }
         }
 
@@ -565,14 +544,13 @@
                         if (buttonTextSpan) buttonTextSpan.style.display = 'none';
                         if (loadingIndicator) loadingIndicator.style.display = 'block';
 
-                        // minimal logging of button press
-                        await this.logButtonEvent(1);
+                        // telemetry removed: no logging of button press
 
                         const processQuestion = async (excludedAnswers = []) => {
                             try {
                                 let queryContent = await this.fetchArticleContent();
 
-                                // If a writing editor exists, we may want to request a full written answer.
+                                // If a writing editor exists, request full written answer.
                                 const writingBox = document.querySelector('.tox-edit-area__iframe');
 
                                 if (writingBox) {
