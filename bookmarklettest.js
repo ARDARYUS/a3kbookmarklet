@@ -1,47 +1,35 @@
-// Bookmarklet-friendly AssessmentHelper (toggle start/stop, spinner, sleep-on-stop, simplified logs)
-// Paste into bookmarklet or run in page.
-
+// Updated AssessmentHelper - full content logging, stop toggle, spinner & label "stop."
 (function () {
-    // Clear old logs and announce injection
     try { console.clear(); } catch (e) {}
     console.log('[AssessmentHelper] injected');
 
-    // Top-level guard
     try {
         if (document.getElementById('Launcher')) {
-            console.log('[AssessmentHelper] already present — aborting injection');
+            // already present — stop
             return;
         }
-    } catch (err) {}
+    } catch (e) {}
 
     class AssessmentHelper {
         constructor() {
-            // state
             this.answerIsDragging = false;
             this.answerInitialX = 0;
             this.answerInitialY = 0;
             this.cachedArticle = null;
             this.isFetchingAnswer = false;
 
-            // Run control
-            this.isRunning = false; // toggled by button
-            this.currentAbortController = null; // for aborting fetches
+            this.isRunning = false;
+            this.currentAbortController = null;
 
-            // Eye / video state
             this.eyeState = 'sleep';
             this.currentVideo = null;
 
-            // External libs
             this.animeScriptUrl = 'https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js';
             this.draggabillyScriptUrl = 'https://unpkg.com/draggabilly@3/dist/draggabilly.pkgd.min.js';
 
-            // Backend endpoint
             this.askEndpoint = 'https://f-ghost-insights-pressed.trycloudflare.com/ask';
-
-            // Asset base (raw GitHub)
             this.assetBase = 'https://raw.githubusercontent.com/ARDARYUS/a3kbookmarklet/main/icons/';
 
-            // Ensure DOM ready
             if (document.readyState === 'loading') {
                 document.addEventListener('DOMContentLoaded', () => this.init());
             } else {
@@ -49,7 +37,6 @@
             }
         }
 
-        /* ---------- util / assets ---------- */
         getUrl(path) {
             if (!path) return '';
             if (/^https?:\/\//i.test(path)) return path;
@@ -90,10 +77,8 @@
             });
         }
 
-        /* ---------- lifecycle ---------- */
         async init() {
             try {
-                // Attempt to load libs (non-fatal)
                 await Promise.resolve(this.loadScript(this.animeScriptUrl)).catch(() => {});
                 await Promise.resolve(this.loadScript(this.draggabillyScriptUrl)).catch(() => {});
 
@@ -101,10 +86,8 @@
                     UI: this.createUI(),
                     answerUI: this.createAnswerUI()
                 };
-
                 this.playIntroAnimation();
             } catch (err) {
-                // fallback: show UI without intro
                 try {
                     this.itemMetadata = {
                         UI: this.createUI(),
@@ -115,11 +98,9 @@
             }
         }
 
-        /* ---------- UI creation ---------- */
         createUI() {
             const container = this.createEl('div');
 
-            // Launcher
             const launcher = this.createEl('div', {
                 id: 'Launcher',
                 className: 'Launcher',
@@ -132,7 +113,6 @@
                 style: 'width:100%;height:24px;cursor:move;background:transparent;position:absolute;top:0;'
             });
 
-            // Eye wrapper + img + video
             const eyeWrapper = this.createEl('div', {
                 id: 'helperEye',
                 style:
@@ -165,21 +145,20 @@
                 style: 'position:absolute;top:8px;right:8px;background:none;border:none;color:white;font-size:18px;cursor:pointer;padding:2px 8px;transition:color 0.2s ease, transform 0.1s ease;opacity:0.5;'
             });
 
-            // getAnswerButton and spinner
+            // Button + spinner (spinner above the small label when running)
             const getAnswerButton = this.createEl('button', {
                 id: 'getAnswerButton',
                 style:
-                    'background:#1a1a1a;border:none;color:white;padding:12px 20px;border-radius:8px;cursor:pointer;margin-top:24px;width:140px;height:44px;font-size:16px;transition:background 0.2s ease, transform 0.1s ease;display:flex;justify-content:center;align-items:center;gap:8px;'
+                    'background:#1a1a1a;border:none;color:white;padding:8px 12px;border-radius:8px;cursor:pointer;margin-top:18px;width:140px;height:64px;font-size:14px;transition:background 0.2s ease, transform 0.1s ease;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:6px;'
             });
 
-            // Spinner element (CSS-based)
+            // More-real spinner (circular dual-ring style)
             const spinner = this.createEl('div', {
                 id: 'ah-spinner',
-                style: 'width:18px;height:18px;border-radius:50%;border:2px solid rgba(255,255,255,0.2);border-top-color:#ffffff;display:none;animation:ah-spin 1s linear infinite;'
+                style: 'width:22px;height:22px;border-radius:50%;border:3px solid rgba(255,255,255,0.15);border-top-color:#ffffff;display:none;animation:ah-spin 0.85s cubic-bezier(.4,.0,.2,1) infinite;'
             });
 
-            // Button label
-            const buttonTextSpan = this.createEl('span', { text: 'work smArt-er', id: 'getAnswerButtonText' });
+            const buttonTextSpan = this.createEl('span', { text: 'work smArt-er', id: 'getAnswerButtonText', style: 'font-size:14px;line-height:1;user-select:none;' });
 
             getAnswerButton.appendChild(spinner);
             getAnswerButton.appendChild(buttonTextSpan);
@@ -194,9 +173,11 @@
 
             container.appendChild(launcher);
 
-            // spinner CSS
             this.applyStylesOnce('assessment-helper-spinner-styles', `
                 @keyframes ah-spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+                /* Running state: spinner visible above the small label */
+                #getAnswerButton.running { background: #2b2b2b; }
+                #getAnswerButton.running span { font-size:12px; opacity:0.95; }
             `);
 
             return container;
@@ -222,7 +203,6 @@
             return container;
         }
 
-        /* ---------- intro & display ---------- */
         playIntroAnimation() {
             if (typeof anime === 'undefined') {
                 this.showUI();
@@ -248,10 +228,7 @@
         }
 
         showUI(skipAnimation = false) {
-            try {
-                document.body.appendChild(this.itemMetadata.UI);
-                document.body.appendChild(this.itemMetadata.answerUI);
-            } catch (e) {}
+            try { document.body.appendChild(this.itemMetadata.UI); document.body.appendChild(this.itemMetadata.answerUI); } catch (e) {}
             const launcher = document.getElementById('Launcher');
             if (!launcher) { this.setupEventListeners(); return; }
             if (skipAnimation) {
@@ -275,7 +252,6 @@
             setTimeout(() => { alertContainer.style.opacity = 0; alertContainer.addEventListener('transitionend', () => alertContainer.remove()); }, 5000);
         }
 
-        /* ---------- article/question fetching ---------- */
         async fetchArticleContent() {
             try {
                 const articleContainer = document.querySelector('#start-reading');
@@ -295,10 +271,8 @@
             }
         }
 
-        /* ---------- backend interaction with abort support ---------- */
         async fetchAnswer(queryContent, retryCount = 0) {
             const MAX_RETRIES = 3, RETRY_DELAY_MS = 1000;
-            // create a new AbortController for this fetch
             try {
                 if (this.currentAbortController) {
                     try { this.currentAbortController.abort(); } catch (e) {}
@@ -314,7 +288,6 @@
                     signal
                 });
 
-                // clear controller after successful fetch
                 this.currentAbortController = null;
 
                 if (!response.ok) {
@@ -329,15 +302,12 @@
                 if (data && (data.response || data.answer)) return String(data.response || data.answer).trim();
                 return 'No answer available';
             } catch (err) {
-                // If abort, return a specific value so caller knows it was stopped
-                if (err && err.name === 'AbortError') {
-                    return '<<ABORTED>>';
-                }
+                if (err && err.name === 'AbortError') return '<<ABORTED>>';
                 return `Error: ${err && err.message ? err.message : String(err)}`;
             }
         }
 
-        /* ---------- Eye helpers ---------- */
+        // Eye helpers (unchanged behavior)
         setEyeToSleep() {
             if (this.eyeState === 'full') return;
             try {
@@ -368,7 +338,6 @@
         async handleHoverEnter() {
             if (this.eyeState === 'full') return;
             try {
-                // if currently asleep, play wakeup sequence
                 await this.playVideoOnce(this.getUrl('icons/wakeup.webm'));
                 if (this.eyeState === 'full') return;
                 const img = document.getElementById('helperEyeImg');
@@ -447,21 +416,25 @@
             } catch (err) {}
         }
 
-        /* ---------- start/stop control ---------- */
         async startProcessUI() {
             const btn = document.getElementById('getAnswerButton');
             const spinner = document.getElementById('ah-spinner');
+            const label = document.getElementById('getAnswerButtonText');
+            if (btn) btn.classList.add('running');
             if (spinner) spinner.style.display = 'block';
-            // keep label 'work smArt-er' but show spinner
+            if (label) label.textContent = 'stop.';
             try { console.log('[AssessmentHelper] started'); } catch (e) {}
         }
 
         async stopProcessUI() {
             const btn = document.getElementById('getAnswerButton');
             const spinner = document.getElementById('ah-spinner');
+            const label = document.getElementById('getAnswerButtonText');
+            if (btn) btn.classList.remove('running');
             if (spinner) spinner.style.display = 'none';
+            if (label) label.textContent = 'work smArt-er';
             try { console.log('[AssessmentHelper] stopped'); } catch (e) {}
-            // play gotosleep then set sleep loop
+
             try {
                 await this.playVideoOnce(this.getUrl('icons/gotosleep.webm'));
             } catch (e) {}
@@ -469,7 +442,6 @@
         }
 
         stopProcessImmediate() {
-            // Abort any in-flight fetches and mark not running
             this.isRunning = false;
             if (this.currentAbortController) {
                 try { this.currentAbortController.abort(); } catch (e) {}
@@ -477,13 +449,11 @@
             }
         }
 
-        /* ---------- event wiring & main behavior ---------- */
         setupEventListeners() {
             try {
                 const launcher = document.getElementById('Launcher');
                 const answerContainer = document.getElementById('answerContainer');
                 const getAnswerButton = launcher ? launcher.querySelector('#getAnswerButton') : null;
-
                 if (!launcher || !answerContainer || !getAnswerButton) return;
 
                 const closeButton = launcher.querySelector('#closeButton');
@@ -497,16 +467,12 @@
                     #getAnswerButton:active { background: #4c4e5b !important; transform: scale(0.98); }
                     #getAnswerButton:disabled { opacity: 0.6; cursor: not-allowed; }
                     .answerLauncher.show { opacity: 1; visibility: visible; transform: translateY(-50%) scale(1); }
-                    @keyframes spin { 0%{transform:rotate(0deg)} 100%{transform:rotate(360deg)}}
-                    #loadingIndicator { display: inline-block; vertical-align: middle; }
                 `);
 
-                // Draggabilly
                 if (typeof Draggabilly !== 'undefined') {
                     try { new Draggabilly(launcher, { handle: '.drag-handle', delay: 50 }); } catch (e) {}
                 }
 
-                // Answer drag
                 const answerDragHandle = answerContainer.querySelector('.answer-drag-handle');
                 if (answerDragHandle) {
                     answerDragHandle.addEventListener('mousedown', (e) => {
@@ -536,7 +502,6 @@
                 document.addEventListener('mouseup', stopDrag);
                 document.addEventListener('mouseleave', stopDrag);
 
-                // close main
                 if (closeButton) {
                     closeButton.addEventListener('click', () => {
                         launcher.style.opacity = 0;
@@ -551,7 +516,6 @@
                     closeButton.addEventListener('mouseup', () => (closeButton.style.transform = 'scale(1)'));
                 }
 
-                // close answer
                 if (closeAnswerButton) {
                     closeAnswerButton.addEventListener('click', () => {
                         answerContainer.style.opacity = 0;
@@ -569,65 +533,47 @@
                     closeAnswerButton.addEventListener('mouseup', () => (closeAnswerButton.style.transform = 'scale(1)'));
                 }
 
-                // Eye hover interactions on the getAnswerButton
-                getAnswerButton.addEventListener('mouseenter', async () => {
-                    try { await this.handleHoverEnter(); } catch (e) {}
-                    getAnswerButton.style.background = '#454545';
-                });
-
-                getAnswerButton.addEventListener('mouseleave', async () => {
-                    try { await this.handleHoverLeave(); } catch (e) {}
-                    getAnswerButton.style.background = '#1a1a1a';
-                });
-
+                // Eye hover interactions
+                getAnswerButton.addEventListener('mouseenter', async () => { try { await this.handleHoverEnter(); } catch (e) {} getAnswerButton.style.background = '#454545'; });
+                getAnswerButton.addEventListener('mouseleave', async () => { try { await this.handleHoverLeave(); } catch (e) {} getAnswerButton.style.background = '#1a1a1a'; });
                 getAnswerButton.addEventListener('mousedown', () => (getAnswerButton.style.transform = 'scale(0.98)'));
                 getAnswerButton.addEventListener('mouseup', () => (getAnswerButton.style.transform = 'scale(1)'));
 
-                // Toggle behavior: start/stop
+                // Toggle start/stop
                 getAnswerButton.addEventListener('click', async () => {
                     if (!this.isRunning) {
-                        // Start run
                         this.isRunning = true;
                         await this.startProcessUI();
-                        // Visual: set eye to full immediately
                         try { this.setEyeToFull(); } catch (e) {}
-                        // Begin the solver loop (non-blocking)
                         this.runSolverLoop();
                     } else {
-                        // Stop run
-                        // immediate abort of any in-flight fetches and prevent further steps
                         this.stopProcessImmediate();
                         await this.stopProcessUI();
                     }
                 });
 
-            } catch (err) {}
+            } catch (e) {}
         }
 
-        /* ---------- solver loop (checks isRunning) ---------- */
         async runSolverLoop() {
-            // keep looping until isRunning is false or we detect no more questions
-            const getAnswerButton = document.getElementById('getAnswerButton');
-            const spinner = document.getElementById('ah-spinner');
-
             const attemptOnce = async (excludedAnswers = []) => {
                 if (!this.isRunning) return false;
                 try {
                     let queryContent = await this.fetchArticleContent();
-                    // MC vs Writing
                     const writingBox = document.querySelector('.tox-edit-area__iframe');
 
                     if (writingBox) {
                         queryContent += "\n\nPlease provide a detailed written answer based on the above article and question.";
-                        // Log sent payload (expandable)
+                        // Expanded full payload logs (strings)
                         try {
                             console.groupCollapsed('[AssessmentHelper] Sent (writing) payload');
-                            console.log({ q: queryContent, article: this.cachedArticle || null });
+                            console.log('q:', queryContent);
+                            console.log('article:', this.cachedArticle || null);
                             console.groupEnd();
                         } catch (e) {}
 
                         const answerText = await this.fetchAnswer(queryContent);
-                        // Log received (expandable)
+
                         try {
                             console.groupCollapsed('[AssessmentHelper] Received (writing) answer');
                             console.log(answerText);
@@ -635,7 +581,6 @@
                         } catch (e) {}
 
                         if (!this.isRunning) return false;
-                        // attempt to insert into editor iframe
                         try {
                             const iframeDoc = writingBox.contentDocument || writingBox.contentWindow.document;
                             if (iframeDoc) {
@@ -647,28 +592,25 @@
                                 }, 500);
                             }
                         } catch (e) {
-                            // fallback: show in answer UI
                             const answerContainerEl = document.getElementById('answerContainer');
                             const answerContentEl = answerContainerEl ? answerContainerEl.querySelector('#answerContent') : null;
                             if (answerContentEl) answerContentEl.textContent = answerText;
                             if (answerContainerEl) { answerContainerEl.style.display = 'flex'; answerContainerEl.style.visibility = 'visible'; answerContainerEl.classList.add('show'); }
                         }
-                        // for writing tasks, we stop after inserting (user may submit) — but continue loop only if still running
                         return this.isRunning;
                     } else {
-                        // MC mode
                         queryContent += "\n\nPROVIDE ONLY A ONE-LETTER ANSWER THAT'S IT NOTHING ELSE (A, B, C, or D).";
                         if (excludedAnswers.length > 0) queryContent += `\n\nDo not pick letter ${excludedAnswers.join(', ')}.`;
 
-                        // Log sent payload (expandable)
                         try {
                             console.groupCollapsed('[AssessmentHelper] Sent (MC) payload');
-                            console.log({ q: queryContent, article: this.cachedArticle || null });
+                            console.log('q:', queryContent);
+                            console.log('article:', this.cachedArticle || null);
                             console.groupEnd();
                         } catch (e) {}
 
                         const answer = await this.fetchAnswer(queryContent);
-                        // Log received (expandable)
+
                         try {
                             console.groupCollapsed('[AssessmentHelper] Received (MC) answer');
                             console.log(answer);
@@ -683,12 +625,11 @@
                         if (answerContentEl) answerContentEl.textContent = normalized || answer;
                         if (answerContainerEl) { answerContainerEl.style.display = 'flex'; answerContainerEl.style.visibility = 'visible'; answerContainerEl.classList.add('show'); }
 
-                        if (['A', 'B', 'C', 'D'].includes(normalized) && !excludedAnswers.includes(normalized)) {
+                        if (['A','B','C','D'].includes(normalized) && !excludedAnswers.includes(normalized)) {
                             const options = document.querySelectorAll('[role="radio"]');
                             const index = normalized.charCodeAt(0) - 'A'.charCodeAt(0);
                             if (options[index]) {
                                 options[index].click();
-                                // small delay for selection to register
                                 await new Promise(r => setTimeout(r, 500));
                                 if (!this.isRunning) return false;
                                 const submitButton = Array.from(document.querySelectorAll('button')).find((b) => b.textContent.trim() === 'Submit');
@@ -701,18 +642,16 @@
                                         const buttonText = nextButton.textContent.trim();
                                         nextButton.click();
                                         if (buttonText === 'Try again') {
-                                            // try again: call recursively with excluded answer
                                             await new Promise(r => setTimeout(r, 1000));
                                             if (!this.isRunning) return false;
                                             return await attemptOnce([...excludedAnswers, normalized]);
                                         } else {
-                                            // proceed to next question (if any)
                                             await new Promise(r => setTimeout(r, 1500));
                                             const newQuestionRadio = document.querySelector('[role="radio"]');
                                             const newSubmitButton = Array.from(document.querySelectorAll('button')).find((b) => b.textContent.trim() === 'Submit');
                                             if (newSubmitButton && newQuestionRadio) {
                                                 if (!this.isRunning) return false;
-                                                return true; // signal to continue loop
+                                                return true;
                                             } else {
                                                 if (answerContentEl) answerContentEl.textContent = 'Processing complete or no more questions found.';
                                                 return false;
@@ -736,11 +675,9 @@
                         }
                     }
                 } catch (err) {
-                    // If aborted explicitly, treat as stop
                     if (String(err && err.message || '').toLowerCase().includes('aborted') || (String(err) === 'Error: <<ABORTED>>')) {
                         return false;
                     }
-                    // show error in UI
                     const answerContainerEl = document.getElementById('answerContainer');
                     const answerContentEl = answerContainerEl ? answerContainerEl.querySelector('#answerContent') : null;
                     if (answerContentEl) answerContentEl.textContent = `Error: ${err && err.message ? err.message : String(err)}`;
@@ -749,35 +686,28 @@
                 }
             };
 
-            // Loop: keep trying until process signals stop or no more questions
             try {
                 while (this.isRunning) {
                     const cont = await attemptOnce();
                     if (!this.isRunning) break;
                     if (!cont) break;
-                    // small delay before next iteration
                     await new Promise(r => setTimeout(r, 300));
                 }
             } finally {
-                // ensure spinner hidden and running false when we exit loop
                 this.isRunning = false;
                 const spinnerEl = document.getElementById('ah-spinner');
                 if (spinnerEl) spinnerEl.style.display = 'none';
-                // play sleep animation when stopping (unless eye is full)
-                try {
-                    await this.playVideoOnce(this.getUrl('icons/gotosleep.webm'));
-                } catch (e) {}
+                try { await this.playVideoOnce(this.getUrl('icons/gotosleep.webm')); } catch (e) {}
                 this.setEyeToSleep();
                 try { console.log('[AssessmentHelper] stopped'); } catch (e) {}
+                // restore button text if still present
+                const label = document.getElementById('getAnswerButtonText');
+                if (label) label.textContent = 'work smArt-er';
+                const btn = document.getElementById('getAnswerButton');
+                if (btn) btn.classList.remove('running');
             }
         }
-
     }
 
-    // instantiate
-    try {
-        new AssessmentHelper();
-    } catch (e) {
-        // do nothing
-    }
+    try { new AssessmentHelper(); } catch (e) {}
 })();
