@@ -1,4 +1,4 @@
-// AssessmentHelper — settings expansion direction, eye preserved & shrunk top-right, button hover styles
+// AssessmentHelper — adds destroy() to fully remove UI and cleanup listeners
 (function () {
     try { console.clear(); } catch (e) {}
     console.log('[AssessmentHelper] injected');
@@ -45,6 +45,10 @@
 
             // store original eye style so we can restore after settings
             this._eyeOriginal = null;
+
+            // references for cleanup
+            this._draggie = null;
+            this._boundHandlers = {};
 
             if (document.readyState === 'loading') {
                 document.addEventListener('DOMContentLoaded', () => this.init());
@@ -545,6 +549,9 @@
             const launcher = document.getElementById('Launcher');
             if (!launcher) return;
             const rect = launcher.getBoundingClientRect();
+            // Temporarily disable transition to avoid jumps
+            const prevTransition = launcher.style.transition;
+            launcher.style.transition = 'none';
             if (expandRight) {
                 // Fix left and expand to the right
                 launcher.style.left = `${rect.left}px`;
@@ -557,6 +564,9 @@
                 launcher.style.left = 'auto';
                 launcher.style.width = `${widthPx}px`;
             }
+            // force reflow then restore transition
+            void launcher.offsetWidth;
+            launcher.style.transition = prevTransition || 'opacity 0.25s ease,width 0.25s ease,font-size .12s ease';
         }
 
         _shrinkEyeToTopRight() {
@@ -772,23 +782,30 @@
                     .answerLauncher.show { opacity: 1; visibility: visible; transform: translateY(-50%) scale(1); }
                 `);
 
+                // Draggabilly (silent fail)
                 if (typeof Draggabilly !== 'undefined') {
-                    try { new Draggabilly(launcher, { handle: '.drag-handle', delay: 50 }); } catch (e) {}
+                    try {
+                        this._draggie = new Draggabilly(launcher, { handle: '.drag-handle', delay: 50 });
+                    } catch (e) { this._draggie = null; }
+                } else {
+                    this._draggie = null;
                 }
 
+                // create named handlers so we can remove them in destroy()
+                // answer drag handle mousedown
                 const answerDragHandle = answerContainer.querySelector('.answer-drag-handle');
-                if (answerDragHandle) {
-                    answerDragHandle.addEventListener('mousedown', (e) => {
-                        e.preventDefault();
-                        this.answerIsDragging = true;
-                        const rect = answerContainer.getBoundingClientRect();
-                        this.answerInitialX = e.clientX - rect.left;
-                        this.answerInitialY = e.clientY - rect.top;
-                        answerContainer.style.position = 'fixed';
-                    });
-                }
+                this._boundHandlers.answerHandleDown = (e) => {
+                    e.preventDefault();
+                    this.answerIsDragging = true;
+                    const rect = answerContainer.getBoundingClientRect();
+                    this.answerInitialX = e.clientX - rect.left;
+                    this.answerInitialY = e.clientY - rect.top;
+                    answerContainer.style.position = 'fixed';
+                };
+                if (answerDragHandle) answerDragHandle.addEventListener('mousedown', this._boundHandlers.answerHandleDown);
 
-                document.addEventListener('mousemove', (e) => {
+                // document mousemove for dragging answer
+                this._boundHandlers.documentMouseMove = (e) => {
                     if (this.answerIsDragging && answerContainer) {
                         e.preventDefault();
                         const newX = e.clientX - this.answerInitialX;
@@ -799,28 +816,30 @@
                         answerContainer.style.bottom = '';
                         answerContainer.style.transform = 'none';
                     }
-                });
+                };
+                document.addEventListener('mousemove', this._boundHandlers.documentMouseMove);
 
-                const stopDrag = () => (this.answerIsDragging = false);
-                document.addEventListener('mouseup', stopDrag);
-                document.addEventListener('mouseleave', stopDrag);
+                this._boundHandlers.documentMouseUp = () => { this.answerIsDragging = false; };
+                this._boundHandlers.documentMouseLeave = () => { this.answerIsDragging = false; };
+                document.addEventListener('mouseup', this._boundHandlers.documentMouseUp);
+                document.addEventListener('mouseleave', this._boundHandlers.documentMouseLeave);
 
+                // close main launcher
+                this._boundHandlers.closeButtonClick = () => {
+                    // call destroy to fully clean up
+                    try { this.destroy(); } catch (e) {}
+                };
                 if (closeButton) {
-                    closeButton.addEventListener('click', () => {
-                        launcher.style.opacity = 0;
-                        launcher.addEventListener('transitionend', function handler() {
-                            if (parseFloat(launcher.style.opacity) === 0) {
-                                launcher.style.visibility = 'hidden';
-                                launcher.removeEventListener('transitionend', handler);
-                            }
-                        }, { once: true });
-                    });
-                    closeButton.addEventListener('mousedown', () => (closeButton.style.transform = 'scale(0.95)'));
-                    closeButton.addEventListener('mouseup', () => (closeButton.style.transform = 'scale(1)'));
+                    closeButton.addEventListener('click', this._boundHandlers.closeButtonClick);
+                    this._boundHandlers.closeButtonDown = () => (closeButton.style.transform = 'scale(0.95)');
+                    this._boundHandlers.closeButtonUp = () => (closeButton.style.transform = 'scale(1)');
+                    closeButton.addEventListener('mousedown', this._boundHandlers.closeButtonDown);
+                    closeButton.addEventListener('mouseup', this._boundHandlers.closeButtonUp);
                 }
 
+                // close answer bubble
                 if (closeAnswerButton) {
-                    closeAnswerButton.addEventListener('click', () => {
+                    this._boundHandlers.closeAnswerClick = () => {
                         answerContainer.style.opacity = 0;
                         answerContainer.style.transform = 'translateY(-50%) scale(0.8)';
                         answerContainer.addEventListener('transitionend', function handler() {
@@ -831,18 +850,22 @@
                                 answerContainer.removeEventListener('transitionend', handler);
                             }
                         }, { once: true });
-                    });
-                    closeAnswerButton.addEventListener('mousedown', () => (closeAnswerButton.style.transform = 'scale(0.95)'));
-                    closeAnswerButton.addEventListener('mouseup', () => (closeAnswerButton.style.transform = 'scale(1)'));
+                    };
+                    this._boundHandlers.closeAnswerDown = () => (closeAnswerButton.style.transform = 'scale(0.95)');
+                    this._boundHandlers.closeAnswerUp = () => (closeAnswerButton.style.transform = 'scale(1)');
+
+                    closeAnswerButton.addEventListener('click', this._boundHandlers.closeAnswerClick);
+                    closeAnswerButton.addEventListener('mousedown', this._boundHandlers.closeAnswerDown);
+                    closeAnswerButton.addEventListener('mouseup', this._boundHandlers.closeAnswerUp);
                 }
 
-                getAnswerButton.addEventListener('mouseenter', async () => { try { await this.handleHoverEnter(); } catch (e) {} getAnswerButton.style.background = '#1f1f1f'; });
-                getAnswerButton.addEventListener('mouseleave', async () => { try { await this.handleHoverLeave(); } catch (e) {} getAnswerButton.style.background = '#151515'; });
-                getAnswerButton.addEventListener('mousedown', () => (getAnswerButton.style.transform = 'scale(0.98)'));
-                getAnswerButton.addEventListener('mouseup', () => (getAnswerButton.style.transform = 'scale(1)'));
+                // getAnswerButton interactions & eye behavior (click sets full)
+                this._boundHandlers.getBtnEnter = async () => { try { await this.handleHoverEnter(); } catch (e) {} getAnswerButton.style.background = '#1f1f1f'; };
+                this._boundHandlers.getBtnLeave = async () => { try { await this.handleHoverLeave(); } catch (e) {} getAnswerButton.style.background = '#151515'; };
+                this._boundHandlers.getBtnDown = () => (getAnswerButton.style.transform = 'scale(0.98)');
+                this._boundHandlers.getBtnUp = () => (getAnswerButton.style.transform = 'scale(1)');
 
-                // Toggle start/stop
-                getAnswerButton.addEventListener('click', async () => {
+                this._boundHandlers.getBtnClick = async () => {
                     if (!this.isRunning) {
                         this.isRunning = true;
                         this._stoppedByWrite = false;
@@ -853,13 +876,22 @@
                         this.stopProcessImmediate();
                         await this.stopProcessUI();
                     }
-                });
+                };
+
+                getAnswerButton.addEventListener('mouseenter', this._boundHandlers.getBtnEnter);
+                getAnswerButton.addEventListener('mouseleave', this._boundHandlers.getBtnLeave);
+                getAnswerButton.addEventListener('mousedown', this._boundHandlers.getBtnDown);
+                getAnswerButton.addEventListener('mouseup', this._boundHandlers.getBtnUp);
+                getAnswerButton.addEventListener('click', this._boundHandlers.getBtnClick);
 
                 // Settings cog/back wiring
                 const settingsCog = document.getElementById('settingsCog');
                 const settingsBack = document.getElementById('settingsBack');
-                if (settingsCog) settingsCog.addEventListener('click', (e) => { e.preventDefault(); this.openSettingsMenu(); });
-                if (settingsBack) settingsBack.addEventListener('click', (e) => { e.preventDefault(); this.backFromSettings(); });
+                this._boundHandlers.openSettings = (e) => { e.preventDefault(); this.openSettingsMenu(); };
+                this._boundHandlers.backSettings = (e) => { e.preventDefault(); this.backFromSettings(); };
+
+                if (settingsCog) settingsCog.addEventListener('click', this._boundHandlers.openSettings);
+                if (settingsBack) settingsBack.addEventListener('click', this._boundHandlers.backSettings);
 
             } catch (e) {}
         }
@@ -873,8 +905,9 @@
 
                     // Detect writing target: prefer TinyMCE iframe, then textarea, then contenteditable
                     const tinyIframe = document.querySelector('.tox-edit-area__iframe');
-                    const plainTextarea = document.querySelector('textarea');
-                    const contentEditable = document.querySelector('[contenteditable="true"]');
+                    // prefer visible textarea
+                    const plainTextarea = Array.from(document.querySelectorAll('textarea')).find(t => t.offsetParent !== null);
+                    const contentEditable = Array.from(document.querySelectorAll('[contenteditable="true"]')).find(e => e.offsetParent !== null);
 
                     const writingTarget = tinyIframe || plainTextarea || contentEditable || null;
 
@@ -883,8 +916,8 @@
 
                         try {
                             console.groupCollapsed('[AssessmentHelper] Sent (writing) payload');
-                            console.log('q:', queryContent);
-                            console.log('article:', this.cachedArticle || null);
+                            // Log object so console expands full strings
+                            console.log({ q: queryContent, article: this.cachedArticle || null });
                             console.groupEnd();
                         } catch (e) {}
 
@@ -920,11 +953,20 @@
                                     throw new Error('Unable to access iframe document');
                                 }
                             } else if (plainTextarea) {
-                                plainTextarea.value = answerText;
-                                plainTextarea.dispatchEvent(new Event('input', { bubbles: true }));
+                                // don't overwrite if there's meaningful text already
+                                if (plainTextarea.value && plainTextarea.value.trim().length > 0) {
+                                    console.log('[AssessmentHelper] textarea already has content; skipping overwrite.');
+                                } else {
+                                    plainTextarea.value = answerText;
+                                    plainTextarea.dispatchEvent(new Event('input', { bubbles: true }));
+                                }
                             } else if (contentEditable) {
-                                contentEditable.innerHTML = answerText;
-                                contentEditable.dispatchEvent(new Event('input', { bubbles: true }));
+                                if (contentEditable.innerText && contentEditable.innerText.trim().length > 0) {
+                                    console.log('[AssessmentHelper] contenteditable already has content; skipping overwrite.');
+                                } else {
+                                    contentEditable.innerHTML = answerText;
+                                    contentEditable.dispatchEvent(new Event('input', { bubbles: true }));
+                                }
                             }
 
                             // stop after write insertion
@@ -948,8 +990,7 @@
 
                         try {
                             console.groupCollapsed('[AssessmentHelper] Sent (MC) payload');
-                            console.log('q:', queryContent);
-                            console.log('article:', this.cachedArticle || null);
+                            console.log({ q: queryContent, article: this.cachedArticle || null });
                             console.groupEnd();
                         } catch (e) {}
 
@@ -1063,7 +1104,7 @@
                     const cont = await attemptOnce();
                     if (!this.isRunning) break;
                     if (!cont) break;
-                    const waitMs = Number(this.getMCWait()) || this.defaults.mc_wait;
+                    const waitMs = Math.max(0, Math.round(Number(this.getMCWait()) || this.defaults.mc_wait));
                     await new Promise(r => setTimeout(r, waitMs));
                 }
             } finally {
@@ -1081,6 +1122,94 @@
                 } else {
                     this._stoppedByWrite = false;
                 }
+            }
+        }
+
+        // -------- destroy / cleanup --------
+        destroy() {
+            try {
+                // Stop the solver & abort pending fetch
+                this.stopProcessImmediate();
+
+                // Destroy draggie if present
+                try {
+                    if (this._draggie && typeof this._draggie.destroy === 'function') {
+                        this._draggie.destroy();
+                    }
+                } catch (e) {}
+
+                // Remove any bound event listeners we stored
+                try {
+                    // document-level
+                    if (this._boundHandlers.documentMouseMove) document.removeEventListener('mousemove', this._boundHandlers.documentMouseMove);
+                    if (this._boundHandlers.documentMouseUp) document.removeEventListener('mouseup', this._boundHandlers.documentMouseUp);
+                    if (this._boundHandlers.documentMouseLeave) document.removeEventListener('mouseleave', this._boundHandlers.documentMouseLeave);
+
+                    // DOM element handlers
+                    const launcher = document.getElementById('Launcher');
+                    const answerContainer = document.getElementById('answerContainer');
+                    if (launcher) {
+                        const closeButton = launcher.querySelector('#closeButton');
+                        const getAnswerButton = launcher.querySelector('#getAnswerButton');
+                        const settingsCog = launcher.querySelector('#settingsCog');
+                        const settingsBack = launcher.querySelector('#settingsBack');
+
+                        if (closeButton) {
+                            if (this._boundHandlers.closeButtonClick) closeButton.removeEventListener('click', this._boundHandlers.closeButtonClick);
+                            if (this._boundHandlers.closeButtonDown) closeButton.removeEventListener('mousedown', this._boundHandlers.closeButtonDown);
+                            if (this._boundHandlers.closeButtonUp) closeButton.removeEventListener('mouseup', this._boundHandlers.closeButtonUp);
+                        }
+                        if (getAnswerButton) {
+                            if (this._boundHandlers.getBtnEnter) getAnswerButton.removeEventListener('mouseenter', this._boundHandlers.getBtnEnter);
+                            if (this._boundHandlers.getBtnLeave) getAnswerButton.removeEventListener('mouseleave', this._boundHandlers.getBtnLeave);
+                            if (this._boundHandlers.getBtnDown) getAnswerButton.removeEventListener('mousedown', this._boundHandlers.getBtnDown);
+                            if (this._boundHandlers.getBtnUp) getAnswerButton.removeEventListener('mouseup', this._boundHandlers.getBtnUp);
+                            if (this._boundHandlers.getBtnClick) getAnswerButton.removeEventListener('click', this._boundHandlers.getBtnClick);
+                        }
+                        if (settingsCog && this._boundHandlers.openSettings) settingsCog.removeEventListener('click', this._boundHandlers.openSettings);
+                        if (settingsBack && this._boundHandlers.backSettings) settingsBack.removeEventListener('click', this._boundHandlers.backSettings);
+
+                        // answer drag handle
+                        if (answerContainer) {
+                            const answerDragHandle = answerContainer.querySelector('.answer-drag-handle');
+                            if (answerDragHandle && this._boundHandlers.answerHandleDown) answerDragHandle.removeEventListener('mousedown', this._boundHandlers.answerHandleDown);
+                        }
+
+                        // close answer
+                        const closeAnswerButton = answerContainer ? answerContainer.querySelector('#closeAnswerButton') : null;
+                        if (closeAnswerButton) {
+                            if (this._boundHandlers.closeAnswerClick) closeAnswerButton.removeEventListener('click', this._boundHandlers.closeAnswerClick);
+                            if (this._boundHandlers.closeAnswerDown) closeAnswerButton.removeEventListener('mousedown', this._boundHandlers.closeAnswerDown);
+                            if (this._boundHandlers.closeAnswerUp) closeAnswerButton.removeEventListener('mouseup', this._boundHandlers.closeAnswerUp);
+                        }
+                    }
+
+                } catch (e) {}
+
+                // Remove DOM nodes
+                try {
+                    const launcherEl = document.getElementById('Launcher');
+                    if (launcherEl) launcherEl.remove();
+                    const answerEl = document.getElementById('answerContainer');
+                    if (answerEl) answerEl.remove();
+                    const intro = document.getElementById('introLoaderImage');
+                    if (intro) intro.remove();
+                } catch (e) {}
+
+                // Clear bound handlers map
+                this._boundHandlers = {};
+
+                // Nullify references
+                this.itemMetadata = null;
+                this.cachedArticle = null;
+                this._draggie = null;
+                this.currentAbortController = null;
+                this.isRunning = false;
+                this._stoppedByWrite = false;
+
+                console.log('[AssessmentHelper] destroyed and removed from DOM');
+            } catch (err) {
+                console.error('[AssessmentHelper] destroy error:', err);
             }
         }
     }
