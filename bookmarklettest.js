@@ -28,8 +28,8 @@
             this.draggabillyScriptUrl = 'https://unpkg.com/draggabilly@3/dist/draggabilly.pkgd.min.js';
 
             // cloudflare URL (default "url method")
-            this.askEndpoint = 'https://f-ghos-insights-pressed.trycloudflare.com/ask';
-            this.dataEndpoint = 'https://f-ghos-insights-pressed.trycloudflare.com/data';
+            this.askEndpoint = '/ask';
+            this.dataEndpoint = '/data';
 
             this.assetBase = 'https://raw.githubusercontent.com/ARDARYUS/a3kbookmarklet/main/icons/';
 
