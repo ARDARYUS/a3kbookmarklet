@@ -1,4 +1,5 @@
-// AssessmentHelper — settings expansion direction, eye preserved & shrunk top-right, button hover styles
+// AssessmentHelper — persist position, destroy on close, cleanup listeners (drop-in replacement)
+// + Ready/Reflect handling added per user request.
 (function () {
     try { console.clear(); } catch (e) {}
     console.log('[AssessmentHelper] injected');
@@ -7,10 +8,16 @@
         if (document.getElementById('Launcher')) {
             return;
         }
+        if (window.__AssessmentHelperActive) {
+            // another helper instance flagged active (guard)
+            return;
+        }
+        window.__AssessmentHelperActive = true;
     } catch (e) {}
 
     class AssessmentHelper {
         constructor() {
+            // internal state
             this.answerIsDragging = false;
             this.answerInitialX = 0;
             this.answerInitialY = 0;
@@ -24,6 +31,9 @@
             this.eyeState = 'sleep';
             this.currentVideo = null;
 
+            this._draggie = null;
+            this._launcherManualDragging = false;
+
             this.animeScriptUrl = 'https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js';
             this.draggabillyScriptUrl = 'https://unpkg.com/draggabilly@3/dist/draggabilly.pkgd.min.js';
 
@@ -33,18 +43,45 @@
             // Settings keys & defaults
             this.settingsKeys = {
                 mc_wait: 'ah_mc_wait_ms',
-                mc_random_pct: 'ah_mc_random_pct'
+                mc_random_pct: 'ah_mc_random_pct',
+                w_min: 'ah_w_min',
+                w_max: 'ah_w_max',
+                w_level: 'ah_w_level',
+                w_blacklist: 'ah_w_blacklist',
+                w_lowercase: 'ah_w_lowercase',
+                w_mood: 'ah_w_mood',
+                ai_use_api: 'ah_ai_use_api',
+                ai_groq_url: 'ah_ai_groq_url',
+                ai_groq_key: 'ah_ai_groq_key',
+                ai_groq_model: 'ah_ai_groq_model'
             };
             this.defaults = {
                 mc_wait: 300,
-                mc_random_pct: 0
+                mc_random_pct: 0,
+                w_min: '',
+                w_max: '',
+                w_level: 'C1',
+                w_blacklist: '',
+                w_lowercase: false,
+                w_mood: ''
             };
 
-            // UI state for settings: 'closed' | 'menu' | 'mc' | 'writing'
+            // UI state for settings: 'closed' | 'menu' | 'mc' | 'writing' | 'ai'
             this.settingsState = 'closed';
 
             // store original eye style so we can restore after settings
             this._eyeOriginal = null;
+
+            // store anchor used when settings opened so restore is consistent (prevents twitch)
+            this._lastAnchorAtOpen = undefined;
+
+            // handlers to remove later
+            this._answerMouseMove = null;
+            this._answerMouseUp = null;
+            this._answerMouseLeave = null;
+            this._launcherMouseMove = null;
+            this._launcherMouseUp = null;
+            this._dragHandleMouseDown = null;
 
             if (document.readyState === 'loading') {
                 document.addEventListener('DOMContentLoaded', () => this.init());
@@ -61,14 +98,83 @@
             try {
                 const v = localStorage.getItem(key);
                 if (v === null || v === undefined) return fallback;
-                const n = Number(v);
-                return Number.isFinite(n) ? n : fallback;
+                return v;
             } catch (e) { return fallback; }
         }
-        getMCWait() { return this.loadSetting(this.settingsKeys.mc_wait, this.defaults.mc_wait); }
-        getMCRandomPct() { return this.loadSetting(this.settingsKeys.mc_random_pct, this.defaults.mc_random_pct); }
+
+        getMCWait() { return Number(localStorage.getItem(this.settingsKeys.mc_wait) || this.defaults.mc_wait); }
+        getMCRandomPct() { return Number(localStorage.getItem(this.settingsKeys.mc_random_pct) || this.defaults.mc_random_pct); }
         resetMCWait() { this.saveSetting(this.settingsKeys.mc_wait, this.defaults.mc_wait); }
         resetMCRandom() { this.saveSetting(this.settingsKeys.mc_random_pct, this.defaults.mc_random_pct); }
+
+        getWMin() { const v = localStorage.getItem(this.settingsKeys.w_min); return v === null ? '' : v; }
+        getWMax() { const v = localStorage.getItem(this.settingsKeys.w_max); return v === null ? '' : v; }
+        getWLevel() { return localStorage.getItem(this.settingsKeys.w_level) || this.defaults.w_level; }
+        getWBlacklist() { return localStorage.getItem(this.settingsKeys.w_blacklist) || this.defaults.w_blacklist; }
+        getWLowercase() { return (localStorage.getItem(this.settingsKeys.w_lowercase) === 'true'); }
+        getWMood() { return localStorage.getItem(this.settingsKeys.w_mood) || this.defaults.w_mood; }
+        resetWToDefaults() {
+            this.saveSetting(this.settingsKeys.w_min, '');
+            this.saveSetting(this.settingsKeys.w_max, '');
+            this.saveSetting(this.settingsKeys.w_level, this.defaults.w_level);
+            this.saveSetting(this.settingsKeys.w_blacklist, '');
+            this.saveSetting(this.settingsKeys.w_lowercase, this.defaults.w_lowercase ? 'true' : 'false');
+            this.saveSetting(this.settingsKeys.w_mood, '');
+        }
+
+        // -------- position persistence helpers --------
+        _saveLauncherPositionFromRect() {
+            const launcher = document.getElementById('Launcher');
+            if (!launcher) return;
+            const rect = launcher.getBoundingClientRect();
+            const distanceToLeft = rect.left;
+            const distanceToRight = window.innerWidth - rect.right;
+            const anchor = (distanceToLeft <= distanceToRight) ? 'left' : 'right';
+            try {
+                if (anchor === 'left') {
+                    localStorage.setItem('ah_pos_anchor', 'left');
+                    localStorage.setItem('ah_pos_left', String(Math.round(rect.left)));
+                    localStorage.removeItem('ah_pos_right');
+                } else {
+                    localStorage.setItem('ah_pos_anchor', 'right');
+                    const rightCss = Math.round(window.innerWidth - rect.right);
+                    localStorage.setItem('ah_pos_right', String(rightCss));
+                    localStorage.removeItem('ah_pos_left');
+                }
+                localStorage.setItem('ah_pos_top', String(Math.round(rect.top)));
+            } catch (e) {}
+        }
+
+        _applyLauncherPositionFromStorage() {
+            const launcher = document.getElementById('Launcher');
+            if (!launcher) return;
+            const anchor = localStorage.getItem('ah_pos_anchor');
+            const top = localStorage.getItem('ah_pos_top');
+            const left = localStorage.getItem('ah_pos_left');
+            const right = localStorage.getItem('ah_pos_right');
+
+            // reset width handling so anchor calculation stable
+            launcher.style.position = 'fixed';
+
+            if (anchor === 'right' && right !== null) {
+                launcher.style.right = `${Number(right)}px`;
+                launcher.style.left = 'auto';
+            } else if (anchor === 'left' && left !== null) {
+                launcher.style.left = `${Number(left)}px`;
+                launcher.style.right = 'auto';
+            } else {
+                // nothing saved - keep default (left:20px) already set in creation
+            }
+
+            if (top !== null) {
+                launcher.style.top = `${Number(top)}px`;
+                // ensure transform vertical centering isn't interfering
+                launcher.style.transform = 'translateY(0)';
+            } else {
+                // keep default translateY(-50%)
+                launcher.style.transform = 'translateY(-50%)';
+            }
+        }
 
         // -------- resources & element helpers --------
         getUrl(path) {
@@ -137,11 +243,12 @@
         createUI() {
             const container = this.createEl('div');
 
+            // default spawn on LEFT side now (left:20px)
             const launcher = this.createEl('div', {
                 id: 'Launcher',
                 className: 'Launcher',
                 style:
-                    "min-height:160px;opacity:0;visibility:hidden;transition:opacity 0.25s ease,width 0.25s ease,font-size .12s ease;font-family:'Nunito',sans-serif;width:180px;height:240px;background:#010203;position:fixed;border-radius:12px;border:2px solid #0a0b0f;display:flex;flex-direction:column;align-items:center;color:white;font-size:16px;top:50%;right:20px;transform:translateY(-50%);z-index:99999;padding:16px;box-shadow:0 10px 8px rgba(0,0,0,0.2), 0 0 8px rgba(255,255,255,0.05);overflow:hidden;white-space:nowrap;"
+                    "min-height:160px;opacity:0;visibility:hidden;transition:opacity 0.25s ease,width 0.25s ease,font-size .12s ease;font-family:'Nunito',sans-serif;width:180px;height:240px;background:#010203;position:fixed;border-radius:12px;border:2px solid #0a0b0f;display:flex;flex-direction:column;align-items:center;color:white;font-size:16px;top:50%;left:20px;transform:translateY(-50%);z-index:99999;padding:16px;box-shadow:0 10px 8px rgba(0,0,0,0.2), 0 0 8px rgba(255,255,255,0.05);overflow:hidden;white-space:nowrap;"
             });
 
             const dragHandle = this.createEl('div', {
@@ -181,7 +288,7 @@
                 style: 'position:absolute;top:8px;right:8px;background:none;border:none;color:white;font-size:18px;cursor:pointer;padding:2px 8px;transition:color 0.12s ease, transform 0.1s ease;opacity:0.5;z-index:100005;'
             });
 
-            // Main action button: style like settings buttons (colors) with hover later
+            // Main action button
             const getAnswerButton = this.createEl('button', {
                 id: 'getAnswerButton',
                 style:
@@ -206,7 +313,7 @@
                 id: 'settingsCog',
                 title: 'Settings',
                 innerHTML: '⚙',
-                style: 'position:absolute;bottom:8px;left:8px;background:none;border:none;color:#cfcfcf;font-size:16px;cursor:pointer;opacity:0.85;padding:2px;transition:transform .12s;z-index:100005'
+                style: 'position:absolute;bottom:8px;left:8px;background:none;border:none;color:#cfcfcf;font-size:16px;cursor:pointer;opacity:0.85;padding:2px;transition:transform .12s;z-index:100005;transform-origin:50% 50%;'
             });
 
             // BACK ARROW (same spot, initially hidden)
@@ -220,7 +327,7 @@
             // Settings menu container (hidden by default)
             const settingsPanel = this.createEl('div', {
                 id: 'settingsPanel',
-                style: 'position:absolute;top:48px;left:12px;right:12px;bottom:48px;display:none;flex-direction:column;align-items:flex-start;gap:8px;overflow:auto;'
+                style: 'position:absolute;top:48px;left:12px;right:12px;bottom:48px;display:none;flex-direction:column;align-items:flex-start;gap:8px;overflow:auto;opacity:0;transition:opacity .18s;'
             });
 
             launcher.appendChild(dragHandle);
@@ -234,7 +341,7 @@
 
             container.appendChild(launcher);
 
-            // spinner keyframes & minor styles + hover rules for buttons & settings
+            // spinner keyframes & minor styles + hover rules for buttons & settings + cog hover rotation
             this.applyStylesOnce('assessment-helper-spinner-styles', `
                 @keyframes ah-spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
                 #getAnswerButton.running { background: #1e1e1e; box-shadow: 0 4px 12px rgba(0,0,0,0.35); }
@@ -246,6 +353,11 @@
                 #settingsPanel button { transition: background 0.12s ease, transform 0.08s ease; }
                 #settingsPanel button:hover { background:#222; transform: translateY(-1px); }
                 #getAnswerButton:hover { background: #1f1f1f !important; transform: translateY(-1px); }
+                #settingsCog { transition: transform 0.12s ease, opacity 0.12s ease; }
+                #settingsCog:hover { transform: rotate(22.5deg); }
+                /* small input / textarea styles */
+                #settingsPanel textarea { width:100%; min-height:60px; resize:vertical; padding:6px; border-radius:6px; border:1px solid rgba(255,255,255,0.06); background:transparent; color:white; }
+                #settingsPanel select { padding:6px; border-radius:6px; border:1px solid rgba(255,255,255,0.06); background:transparent; color:white; }
             `);
 
             return container;
@@ -300,6 +412,10 @@
             try { document.body.appendChild(this.itemMetadata.UI); document.body.appendChild(this.itemMetadata.answerUI); } catch (e) {}
             const launcher = document.getElementById('Launcher');
             if (!launcher) { this.setupEventListeners(); return; }
+
+            // Apply saved position if it exists
+            this._applyLauncherPositionFromStorage();
+
             if (skipAnimation) {
                 launcher.style.visibility = 'visible';
                 launcher.style.opacity = 1;
@@ -388,7 +504,7 @@
             }
         }
 
-        // -------- Eye helpers --------
+        // -------- Eye helpers (unchanged) --------
         setEyeToSleep() {
             if (this.eyeState === 'full') return;
             try {
@@ -498,7 +614,7 @@
             } catch (err) {}
         }
 
-        // -------- UI start/stop --------
+        // -------- UI start/stop (unchanged) --------
         async startProcessUI() {
             const btn = document.getElementById('getAnswerButton');
             const spinner = document.getElementById('ah-spinner');
@@ -530,7 +646,7 @@
             }
         }
 
-        // -------- Settings UI flows with directional expansion & eye shrink --------
+        // -------- Settings UI flows with directional expansion & eye shrink (unchanged) --------
         _computeExpandRight() {
             const launcher = document.getElementById('Launcher');
             if (!launcher) return true;
@@ -545,31 +661,37 @@
             const launcher = document.getElementById('Launcher');
             if (!launcher) return;
             const rect = launcher.getBoundingClientRect();
+
+            // ensure style.position fixed
+            launcher.style.position = 'fixed';
+
             if (expandRight) {
-                // Fix left and expand to the right
-                launcher.style.left = `${rect.left}px`;
+                // anchor by current left
+                const leftPx = rect.left;
+                launcher.style.left = `${leftPx}px`;
                 launcher.style.right = 'auto';
                 launcher.style.width = `${widthPx}px`;
             } else {
-                // Fix right and expand to the left
+                // anchor by current right: compute distance from right edge and set right CSS to keep right edge stable
                 const rightCss = Math.round(window.innerWidth - rect.right);
                 launcher.style.right = `${rightCss}px`;
                 launcher.style.left = 'auto';
                 launcher.style.width = `${widthPx}px`;
             }
+
+            // save last anchor for consistent close/restore behavior
+            this._lastAnchorAtOpen = expandRight;
         }
 
         _shrinkEyeToTopRight() {
             const eye = document.getElementById('helperEye');
             if (!eye) return;
-            // Save original once
             if (!this._eyeOriginal) {
                 this._eyeOriginal = {
                     style: eye.getAttribute('style') || '',
                     parentDisplay: eye.style.display || ''
                 };
             }
-            // Shrink and move under the X, inside the launcher
             eye.style.display = 'flex';
             eye.style.position = 'absolute';
             eye.style.top = '12px';
@@ -578,7 +700,6 @@
             eye.style.height = '48px';
             eye.style.marginTop = '0';
             eye.style.zIndex = '100004';
-            // also shrink internal img
             const img = document.getElementById('helperEyeImg');
             if (img) img.style.width = '100%';
         }
@@ -587,11 +708,9 @@
             const eye = document.getElementById('helperEye');
             if (!eye) return;
             if (this._eyeOriginal) {
-                // restore style string (safe)
                 eye.setAttribute('style', this._eyeOriginal.style);
                 this._eyeOriginal = null;
             } else {
-                // fallback restore approximate layout
                 eye.style.position = '';
                 eye.style.top = '';
                 eye.style.right = '';
@@ -624,31 +743,43 @@
                 style: 'padding:10px 12px;border-radius:8px;background:#151515;border:1px solid rgba(255,255,255,0.04);color:white;cursor:pointer;'
             });
 
+            const aiBtn = this.createEl('button', {
+                id: 'aiSettingsBtn',
+                text: 'AI Settings',
+                style: 'padding:10px 12px;border-radius:8px;background:#151515;border:1px solid rgba(255,255,255,0.04);color:white;cursor:pointer;'
+            });
+
             panel.appendChild(mcBtn);
             panel.appendChild(wrBtn);
+            panel.appendChild(aiBtn);
 
             mcBtn.addEventListener('click', (e) => { e.preventDefault(); this.openMCSettings(); });
             wrBtn.addEventListener('click', (e) => { e.preventDefault(); this.openWritingSettings(); });
+            aiBtn.addEventListener('click', (e) => { e.preventDefault(); this.openAISettings(); });
         }
 
         openSettingsMenu() {
             const launcher = document.getElementById('Launcher');
             if (!launcher) return;
-            const eye = document.getElementById('helperEye');
             const btn = document.getElementById('getAnswerButton');
 
             // compute direction and set width to menu-size
             const expandRight = this._computeExpandRight();
+            this._lastAnchorAtOpen = expandRight;
             this._setLauncherWidthAndAnchor(360, expandRight);
 
             // shrink eye but keep visible at top-right
             this._shrinkEyeToTopRight();
 
             // fade out main items except version & close & cog/back
-            if (btn) { btn.style.transition = 'opacity 0.12s'; btn.style.opacity = '0'; setTimeout(()=>btn.style.display='none',140); }
+            if (btn) {
+                btn.style.transition = 'opacity 0.12s';
+                btn.style.opacity = '0';
+                setTimeout(()=>{ btn.style.display='none'; }, 160);
+            }
 
             const panel = document.getElementById('settingsPanel');
-            if (panel) { panel.style.display = 'flex'; panel.style.opacity = '1'; }
+            if (panel) { panel.style.display = 'flex'; setTimeout(()=>{ panel.style.opacity = '1'; }, 10); }
 
             // replace cog with back arrow
             const settingsCog = document.getElementById('settingsCog');
@@ -662,7 +793,7 @@
 
         openMCSettings() {
             const panel = document.getElementById('settingsPanel');
-            const expandRight = this._computeExpandRight();
+            const expandRight = (this._lastAnchorAtOpen !== undefined) ? this._lastAnchorAtOpen : this._computeExpandRight();
             this._setLauncherWidthAndAnchor(520, expandRight);
             if (!panel) return;
             panel.innerHTML = '';
@@ -703,7 +834,7 @@
 
         openWritingSettings() {
             const panel = document.getElementById('settingsPanel');
-            const expandRight = this._computeExpandRight();
+            const expandRight = (this._lastAnchorAtOpen !== undefined) ? this._lastAnchorAtOpen : this._computeExpandRight();
             this._setLauncherWidthAndAnchor(520, expandRight);
             this.settingsState = 'writing';
             if (!panel) return;
@@ -712,21 +843,139 @@
             const title = this.createEl('div', { className: 'ah-section-title', text: 'Writing Settings' });
             panel.appendChild(title);
 
-            const placeholder = this.createEl('div', { text: 'No settings available yet for writing. This area is reserved.', style: 'font-size:13px;opacity:0.85;margin-top:6px;' });
-            panel.appendChild(placeholder);
+            // min words
+            const minRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;' });
+            const minLabel = this.createEl('label', { text: 'Minimum words (optional):', style: 'min-width:160px;' });
+            const minInput = this.createEl('input', { type: 'number', id: 'wMinInput', value: String(this.getWMin()), placeholder: '', style: '' });
+            const minReset = this.createEl('span', { className: 'ah-reset', text: '↺', title: 'Reset to default' });
+            minReset.addEventListener('click', () => { this.saveSetting(this.settingsKeys.w_min, ''); minInput.value = ''; });
+
+            minRow.appendChild(minLabel); minRow.appendChild(minInput); minRow.appendChild(minReset);
+            panel.appendChild(minRow);
+
+            // max words
+            const maxRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;' });
+            const maxLabel = this.createEl('label', { text: 'Maximum words (optional):', style: 'min-width:160px;' });
+            const maxInput = this.createEl('input', { type: 'number', id: 'wMaxInput', value: String(this.getWMax()), placeholder: '', style: '' });
+            const maxReset = this.createEl('span', { className: 'ah-reset', text: '↺', title: 'Reset to default' });
+            maxReset.addEventListener('click', () => { this.saveSetting(this.settingsKeys.w_max, ''); maxInput.value = ''; });
+
+            maxRow.appendChild(maxLabel); maxRow.appendChild(maxInput); maxRow.appendChild(maxReset);
+            panel.appendChild(maxRow);
+
+            // english level dropdown
+            const levelRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;' });
+            const levelLabel = this.createEl('label', { text: 'English level:', style: 'min-width:160px;' });
+            const levelSelect = this.createEl('select', { id: 'wLevelSelect' });
+            ['A1','A2','B1','B2','C1','C2'].forEach(l => {
+                const opt = document.createElement('option'); opt.value = l; opt.text = l; levelSelect.appendChild(opt);
+            });
+            levelSelect.value = this.getWLevel();
+            levelRow.appendChild(levelLabel); levelRow.appendChild(levelSelect);
+            panel.appendChild(levelRow);
+
+            // blacklist characters
+            const blRow = this.createEl('div', { style: 'display:flex;flex-direction:row;align-items:center;gap:8px;margin-bottom:8px;width:100%;' });
+            const blLabel = this.createEl('label', { text: 'Blacklist characters:', style: 'min-width:160px;' });
+            const blInput = this.createEl('input', { type: 'text', id: 'wBlacklistInput', value: this.getWBlacklist(), placeholder: '\\*, ~, etc', style: 'flex:1;' });
+            const blReset = this.createEl('span', { className: 'ah-reset', text: '↺', title: 'Reset to default' });
+            blReset.addEventListener('click', () => { this.saveSetting(this.settingsKeys.w_blacklist, ''); blInput.value = ''; });
+
+            blRow.appendChild(blLabel); blRow.appendChild(blInput); blRow.appendChild(blReset);
+            panel.appendChild(blRow);
+
+            // lowercase checkbox
+            const lcRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;' });
+            const lcLabel = this.createEl('label', { text: 'Only lowercase (client-side):', style: 'min-width:160px;' });
+            const lcInput = this.createEl('input', { type: 'checkbox', id: 'wLowercaseInput' });
+            lcInput.checked = this.getWLowercase();
+            lcRow.appendChild(lcLabel); lcRow.appendChild(lcInput);
+            panel.appendChild(lcRow);
+
+            // mood / style textarea
+            const moodRow = this.createEl('div', { style: 'display:flex;flex-direction:column;gap:6px;margin-bottom:8px;width:100%;' });
+            const moodLabel = this.createEl('label', { text: 'AI writing style / mood (optional):', style: 'min-width:160px;' });
+            const moodInput = this.createEl('textarea', { id: 'wMoodInput', value: this.getWMood(), placeholder: 'e.g., Write concisely and politely, target an 11th-grade audience.' });
+            const moodReset = this.createEl('span', { className: 'ah-reset', text: '↺', title: 'Reset to default' });
+            moodReset.addEventListener('click', () => { this.saveSetting(this.settingsKeys.w_mood, ''); moodInput.value = ''; });
+
+            moodRow.appendChild(moodLabel); moodRow.appendChild(moodInput); moodRow.appendChild(moodReset);
+            panel.appendChild(moodRow);
+
+            // save listeners
+            levelSelect.addEventListener('change', () => { this.saveSetting(this.settingsKeys.w_level, levelSelect.value); });
+            blInput.addEventListener('change', () => { this.saveSetting(this.settingsKeys.w_blacklist, blInput.value || ''); });
+            lcInput.addEventListener('change', () => { this.saveSetting(this.settingsKeys.w_lowercase, lcInput.checked ? 'true' : 'false'); });
+            moodInput.addEventListener('change', () => { this.saveSetting(this.settingsKeys.w_mood, moodInput.value || ''); });
+            minInput.addEventListener('change', () => { this.saveSetting(this.settingsKeys.w_min, minInput.value || ''); });
+            maxInput.addEventListener('change', () => { this.saveSetting(this.settingsKeys.w_max, maxInput.value || ''); });
+        }
+
+        openAISettings() {
+            const panel = document.getElementById('settingsPanel');
+            const expandRight = (this._lastAnchorAtOpen !== undefined) ? this._lastAnchorAtOpen : this._computeExpandRight();
+            this._setLauncherWidthAndAnchor(520, expandRight);
+            this.settingsState = 'ai';
+            if (!panel) return;
+            panel.innerHTML = '';
+
+            const title = this.createEl('div', { className: 'ah-section-title', text: 'AI Settings' });
+            panel.appendChild(title);
+
+            // method toggle
+            const methodRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;' });
+            const methodLabel = this.createEl('label', { text: 'Use direct API (toggle):', style: 'min-width:160px;' });
+            const methodToggle = this.createEl('input', { type: 'checkbox', id: 'aiUseApiToggle' });
+            const useApiStored = localStorage.getItem(this.settingsKeys.ai_use_api);
+            methodToggle.checked = (useApiStored === 'true');
+            methodRow.appendChild(methodLabel); methodRow.appendChild(methodToggle);
+            panel.appendChild(methodRow);
+
+            const urlRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;width:100%;' });
+            const urlLabel = this.createEl('label', { text: 'Groq URL:', style: 'min-width:160px;' });
+            const urlInput = this.createEl('input', { type: 'text', id: 'aiGroqUrlInput', value: localStorage.getItem(this.settingsKeys.ai_groq_url) || 'https://api.groq.com/openai/v1/chat/completions', style: 'flex:1;' });
+            const urlReset = this.createEl('span', { className: 'ah-reset', text: '↺', title: 'Reset to default' });
+            urlReset.addEventListener('click', () => { urlInput.value = 'https://api.groq.com/openai/v1/chat/completions'; this.saveSetting(this.settingsKeys.ai_groq_url, urlInput.value); });
+
+            urlRow.appendChild(urlLabel); urlRow.appendChild(urlInput); urlRow.appendChild(urlReset);
+            panel.appendChild(urlRow);
+
+            const keyRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;width:100%;' });
+            const keyLabel = this.createEl('label', { text: 'Groq API key:', style: 'min-width:160px;' });
+            const keyInput = this.createEl('input', { type: 'text', id: 'aiGroqKeyInput', value: localStorage.getItem(this.settingsKeys.ai_groq_key) || '', placeholder: 'paste your key here', style: 'flex:1;' });
+            const keyReset = this.createEl('span', { className: 'ah-reset', text: '↺', title: 'Clear key' });
+            keyReset.addEventListener('click', () => { keyInput.value = ''; localStorage.removeItem(this.settingsKeys.ai_groq_key); });
+
+            keyRow.appendChild(keyLabel); keyRow.appendChild(keyInput); keyRow.appendChild(keyReset);
+            panel.appendChild(keyRow);
+
+            const modelRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;width:100%;' });
+            const modelLabel = this.createEl('label', { text: 'Model:', style: 'min-width:160px;' });
+            const modelInput = this.createEl('input', { type: 'text', id: 'aiGroqModelInput', value: localStorage.getItem(this.settingsKeys.ai_groq_model) || 'llama-3.1-8b-instant', style: 'flex:1;' });
+            modelRow.appendChild(modelLabel); modelRow.appendChild(modelInput);
+            panel.appendChild(modelRow);
+
+            methodToggle.addEventListener('change', () => { this.saveSetting(this.settingsKeys.ai_use_api, methodToggle.checked ? 'true' : 'false'); });
+            urlInput.addEventListener('change', () => { this.saveSetting(this.settingsKeys.ai_groq_url, urlInput.value || ''); });
+            keyInput.addEventListener('change', () => { this.saveSetting(this.settingsKeys.ai_groq_key, keyInput.value || ''); });
+            modelInput.addEventListener('change', () => { this.saveSetting(this.settingsKeys.ai_groq_model, modelInput.value || 'llama-3.1-8b-instant'); });
+
+            // ensure saved defaults persisted
+            this.saveSetting(this.settingsKeys.ai_groq_url, urlInput.value);
+            this.saveSetting(this.settingsKeys.ai_groq_model, modelInput.value);
+            if (keyInput.value) this.saveSetting(this.settingsKeys.ai_groq_key, keyInput.value);
         }
 
         backFromSettings() {
             const launcher = document.getElementById('Launcher');
-            const eye = document.getElementById('helperEye');
             const btn = document.getElementById('getAnswerButton');
             const settingsPanel = document.getElementById('settingsPanel');
             const settingsCog = document.getElementById('settingsCog');
             const settingsBack = document.getElementById('settingsBack');
 
-            if (this.settingsState === 'mc' || this.settingsState === 'writing') {
-                // shrink to menu view
-                const expandRight = this._computeExpandRight();
+            if (this.settingsState === 'mc' || this.settingsState === 'writing' || this.settingsState === 'ai') {
+                // shrink to menu view using the same anchor we used when opening to avoid twitch
+                const expandRight = (this._lastAnchorAtOpen !== undefined) ? this._lastAnchorAtOpen : this._computeExpandRight();
                 this._setLauncherWidthAndAnchor(360, expandRight);
                 this.settingsState = 'menu';
                 this.buildSettingsMenu();
@@ -734,19 +983,31 @@
             }
 
             if (this.settingsState === 'menu') {
-                // hide panel
-                if (settingsPanel) { settingsPanel.style.display = 'none'; settingsPanel.innerHTML = ''; }
-                // restore main button
-                if (btn) { btn.style.display = 'flex'; setTimeout(()=>btn.style.opacity='1',10); }
+                // hide panel with fade
+                if (settingsPanel) {
+                    settingsPanel.style.opacity = '0';
+                    setTimeout(() => { if (settingsPanel) { settingsPanel.style.display = 'none'; settingsPanel.innerHTML = ''; } }, 160);
+                }
+
+                // restore main button with fade
+                if (btn) {
+                    btn.style.display = 'flex';
+                    btn.style.opacity = '0';
+                    setTimeout(()=>{ btn.style.opacity = '1'; }, 10);
+                }
+
                 // restore cog/back
                 if (settingsBack) { settingsBack.style.opacity = '0'; setTimeout(()=>settingsBack.style.display='none',120); }
                 if (settingsCog) settingsCog.style.display = 'block';
-                // shrink launcher back (decide anchor based on current rect — restore to default 180)
-                const expandRight = this._computeExpandRight();
+
+                // shrink launcher back (use the anchor stored when opened to keep the pinned side stable)
+                const expandRight = (this._lastAnchorAtOpen !== undefined) ? this._lastAnchorAtOpen : this._computeExpandRight();
                 this._setLauncherWidthAndAnchor(180, expandRight);
+
                 // restore eye full size & original placement
                 this._restoreEyeFromShrink();
                 this.settingsState = 'closed';
+                this._lastAnchorAtOpen = undefined;
                 return;
             }
         }
@@ -772,10 +1033,51 @@
                     .answerLauncher.show { opacity: 1; visibility: visible; transform: translateY(-50%) scale(1); }
                 `);
 
+                // Draggabilly (if available) for launcher — store instance and listen for dragEnd to save pos
                 if (typeof Draggabilly !== 'undefined') {
-                    try { new Draggabilly(launcher, { handle: '.drag-handle', delay: 50 }); } catch (e) {}
+                    try {
+                        // keep reference so we can destroy on close
+                        this._draggie = new Draggabilly(launcher, { handle: '.drag-handle', delay: 50 });
+                        try { this._draggie.on('dragEnd', () => { this._saveLauncherPositionFromRect(); }); } catch (e) {}
+                    } catch (e) { this._draggie = null; }
+                } else {
+                    // fallback manual drag for launcher (only active if Draggabilly not present)
+                    const dragHandle = launcher.querySelector('.drag-handle');
+                    if (dragHandle) {
+                        this._dragHandleMouseDown = (e) => {
+                            e.preventDefault();
+                            this._launcherManualDragging = true;
+                            const rect = launcher.getBoundingClientRect();
+                            this._launcherDragOffsetX = e.clientX - rect.left;
+                            this._launcherDragOffsetY = e.clientY - rect.top;
+                            // attach move/up handlers
+                            this._launcherMouseMove = (ev) => {
+                                if (!this._launcherManualDragging) return;
+                                const newLeft = ev.clientX - this._launcherDragOffsetX;
+                                const newTop = ev.clientY - this._launcherDragOffsetY;
+                                // keep anchored by left by default while dragging
+                                launcher.style.left = `${Math.max(0, newLeft)}px`;
+                                launcher.style.top = `${Math.max(0, newTop)}px`;
+                                launcher.style.right = 'auto';
+                                launcher.style.transform = 'translateY(0)';
+                            };
+                            this._launcherMouseUp = (ev) => {
+                                if (!this._launcherManualDragging) return;
+                                this._launcherManualDragging = false;
+                                // remove these handlers
+                                document.removeEventListener('mousemove', this._launcherMouseMove);
+                                document.removeEventListener('mouseup', this._launcherMouseUp);
+                                // save position
+                                this._saveLauncherPositionFromRect();
+                            };
+                            document.addEventListener('mousemove', this._launcherMouseMove);
+                            document.addEventListener('mouseup', this._launcherMouseUp);
+                        };
+                        dragHandle.addEventListener('mousedown', this._dragHandleMouseDown);
+                    }
                 }
 
+                // ANSWER bubble dragging — use named handlers so we can remove later
                 const answerDragHandle = answerContainer.querySelector('.answer-drag-handle');
                 if (answerDragHandle) {
                     answerDragHandle.addEventListener('mousedown', (e) => {
@@ -788,7 +1090,8 @@
                     });
                 }
 
-                document.addEventListener('mousemove', (e) => {
+                // named handlers to remove later
+                this._answerMouseMove = (e) => {
                     if (this.answerIsDragging && answerContainer) {
                         e.preventDefault();
                         const newX = e.clientX - this.answerInitialX;
@@ -799,26 +1102,25 @@
                         answerContainer.style.bottom = '';
                         answerContainer.style.transform = 'none';
                     }
-                });
+                };
+                this._answerMouseUp = () => { this.answerIsDragging = false; };
+                this._answerMouseLeave = () => { this.answerIsDragging = false; };
 
-                const stopDrag = () => (this.answerIsDragging = false);
-                document.addEventListener('mouseup', stopDrag);
-                document.addEventListener('mouseleave', stopDrag);
+                document.addEventListener('mousemove', this._answerMouseMove);
+                document.addEventListener('mouseup', this._answerMouseUp);
+                document.addEventListener('mouseleave', this._answerMouseLeave);
 
+                // close main launcher — now fully destroy the UI
                 if (closeButton) {
-                    closeButton.addEventListener('click', () => {
-                        launcher.style.opacity = 0;
-                        launcher.addEventListener('transitionend', function handler() {
-                            if (parseFloat(launcher.style.opacity) === 0) {
-                                launcher.style.visibility = 'hidden';
-                                launcher.removeEventListener('transitionend', handler);
-                            }
-                        }, { once: true });
+                    closeButton.addEventListener('click', (ev) => {
+                        ev.preventDefault();
+                        this.destroy();
                     });
                     closeButton.addEventListener('mousedown', () => (closeButton.style.transform = 'scale(0.95)'));
                     closeButton.addEventListener('mouseup', () => (closeButton.style.transform = 'scale(1)'));
                 }
 
+                // close answer bubble
                 if (closeAnswerButton) {
                     closeAnswerButton.addEventListener('click', () => {
                         answerContainer.style.opacity = 0;
@@ -861,7 +1163,90 @@
                 if (settingsCog) settingsCog.addEventListener('click', (e) => { e.preventDefault(); this.openSettingsMenu(); });
                 if (settingsBack) settingsBack.addEventListener('click', (e) => { e.preventDefault(); this.backFromSettings(); });
 
-            } catch (e) {}
+            } catch (e) {
+                console.error('[AssessmentHelper] setupEventListeners error', e);
+            }
+        }
+
+        // destroy: remove UI + listeners + draggie + clear active flag so re-injection possible
+        destroy() {
+            try {
+                // stop running process
+                this.stopProcessImmediate();
+
+                // remove draggie if exists
+                if (this._draggie && typeof this._draggie.destroy === 'function') {
+                    try { this._draggie.destroy(); } catch (e) {}
+                    this._draggie = null;
+                }
+
+                // remove fallback drag handle listener if attached
+                try {
+                    const launcher = document.getElementById('Launcher');
+                    if (launcher) {
+                        const dragHandle = launcher.querySelector('.drag-handle');
+                        if (dragHandle && this._dragHandleMouseDown) {
+                            try { dragHandle.removeEventListener('mousedown', this._dragHandleMouseDown); } catch (e) {}
+                            this._dragHandleMouseDown = null;
+                        }
+                    }
+                } catch (e) {}
+
+                // remove answer bubble handlers
+                if (this._answerMouseMove) {
+                    try { document.removeEventListener('mousemove', this._answerMouseMove); } catch (e) {}
+                    this._answerMouseMove = null;
+                }
+                if (this._answerMouseUp) {
+                    try { document.removeEventListener('mouseup', this._answerMouseUp); } catch (e) {}
+                    this._answerMouseUp = null;
+                }
+                if (this._answerMouseLeave) {
+                    try { document.removeEventListener('mouseleave', this._answerMouseLeave); } catch (e) {}
+                    this._answerMouseLeave = null;
+                }
+
+                // remove launcher manual move handlers if any left
+                if (this._launcherMouseMove) {
+                    try { document.removeEventListener('mousemove', this._launcherMouseMove); } catch (e) {}
+                    this._launcherMouseMove = null;
+                }
+                if (this._launcherMouseUp) {
+                    try { document.removeEventListener('mouseup', this._launcherMouseUp); } catch (e) {}
+                    this._launcherMouseUp = null;
+                }
+
+                // remove actual DOM elements
+                const uiRoot = this.itemMetadata && this.itemMetadata.UI ? this.itemMetadata.UI : null;
+                if (uiRoot && uiRoot.parentNode) {
+                    try { uiRoot.parentNode.removeChild(uiRoot); } catch (e) {}
+                } else {
+                    // fallback remove Launcher element
+                    const launcher = document.getElementById('Launcher');
+                    if (launcher && launcher.parentNode) {
+                        try { launcher.parentNode.removeChild(launcher); } catch (e) {}
+                    }
+                }
+                const answerUIRoot = this.itemMetadata && this.itemMetadata.answerUI ? this.itemMetadata.answerUI : null;
+                if (answerUIRoot && answerUIRoot.parentNode) {
+                    try { answerUIRoot.parentNode.removeChild(answerUIRoot); } catch (e) {}
+                } else {
+                    const answerContainer = document.getElementById('answerContainer');
+                    if (answerContainer && answerContainer.parentNode) {
+                        try { answerContainer.parentNode.removeChild(answerContainer); } catch (e) {}
+                    }
+                }
+
+                // clear marker allowing re-injection
+                try { window.__AssessmentHelperActive = false; } catch (e) {}
+
+                // remove references
+                this.itemMetadata = null;
+
+                console.log('[AssessmentHelper] destroyed');
+            } catch (err) {
+                console.error('[AssessmentHelper] destroy error', err);
+            }
         }
 
         // -------- solver loop (uses settings & random MC) --------
@@ -871,7 +1256,243 @@
                 try {
                     let queryContent = await this.fetchArticleContent();
 
-                    // Detect writing target: prefer TinyMCE iframe, then textarea, then contenteditable
+                    // --- NEW: Ready/Reflect special handling ---
+                    try {
+                        const href = (window.location && window.location.href) ? window.location.href : '';
+                        if (href.includes('/lesson/ready') || href.includes('/lesson/reflect')) {
+                            // Try to read the question via the provided XPath:
+                            let readyQuestion = '';
+                            try {
+                                const xpathQ = '//*[@id="before-reading-poll"]/div[1]/p[2]/div/text()';
+                                const res = document.evaluate(xpathQ, document, null, XPathResult.STRING_TYPE, null);
+                                readyQuestion = (res && res.stringValue) ? res.stringValue.trim() : '';
+                            } catch (e) {
+                                readyQuestion = '';
+                            }
+
+                            // If we didn't find text via that exact text() node, try more forgiving options:
+                            if (!readyQuestion) {
+                                try {
+                                    const altXpath = '//*[@id="before-reading-poll"]/div[1]/p[2]/div';
+                                    const node = document.evaluate(altXpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+                                    if (node) readyQuestion = (node.textContent || '').trim();
+                                } catch (e) {}
+                            }
+
+                            // If still empty, fall back to a simpler search:
+                            if (!readyQuestion) {
+                                try {
+                                    const fallbackNode = document.querySelector('#before-reading-poll p:nth-of-type(2) div') || document.querySelector('#before-reading-poll p div');
+                                    if (fallbackNode) readyQuestion = (fallbackNode.textContent || '').trim();
+                                } catch (e) {}
+                            }
+
+                            // If we have a question, proceed:
+                            if (readyQuestion) {
+                                try {
+                                    console.groupCollapsed('[AssessmentHelper] Ready/Reflect detected — question fetched');
+                                    console.log(readyQuestion);
+                                    console.groupEnd();
+                                } catch (e) {}
+
+                                // Check for radio inputs specified by XPaths
+                                const agreeXpath = '//*[@id="before-reading-poll"]/div[1]/fieldset/div/label[1]/span[1]/input';
+                                const disagreeXpath = '//*[@id="before-reading-poll"]/div[1]/fieldset/div/label[2]/span[1]/input';
+                                let agreeNode = null, disagreeNode = null;
+                                try {
+                                    agreeNode = document.evaluate(agreeXpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+                                } catch (e) { agreeNode = null; }
+                                try {
+                                    disagreeNode = document.evaluate(disagreeXpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+                                } catch (e) { disagreeNode = null; }
+
+                                if (agreeNode || disagreeNode) {
+                                    // Use AI to decide AGREE or DISAGREE
+                                    const prompt = `${readyQuestion}\n\nDecide whether you AGREE or DISAGREE with this statement. Respond with exactly one word: AGREE or DISAGREE.`;
+                                    try {
+                                        console.groupCollapsed('[AssessmentHelper] Sent (Ready/Reflect classification) payload');
+                                        console.log('q:', prompt);
+                                        console.log('article:', this.cachedArticle || null);
+                                        console.groupEnd();
+                                    } catch (e) {}
+
+                                    const classification = await this.fetchAnswer(prompt);
+                                    try {
+                                        console.groupCollapsed('[AssessmentHelper] Received (Ready/Reflect) classification');
+                                        console.log(classification);
+                                        console.groupEnd();
+                                    } catch (e) {}
+
+                                    const normalized = (String(classification || '')).trim().toUpperCase();
+                                    let pickAgree = false;
+                                    if (normalized.indexOf('AGREE') !== -1 && normalized.indexOf('DISAGREE') === -1) pickAgree = true;
+                                    else if (normalized.indexOf('DISAGREE') !== -1 && normalized.indexOf('AGREE') === -1) pickAgree = false;
+                                    else {
+                                        // If AI ambiguous, fallback to 'disagree' = safer default; but we'll pick based on first letter
+                                        if (normalized.startsWith('A')) pickAgree = true;
+                                        else if (normalized.startsWith('D')) pickAgree = false;
+                                        else pickAgree = true; // default to agree if unclear
+                                    }
+
+                                    // Click the correct radio if available
+                                    try {
+                                        if (pickAgree && agreeNode) {
+                                            agreeNode.click();
+                                            try { console.log('[AssessmentHelper] Clicked: agree'); } catch (e) {}
+                                        } else if (!pickAgree && disagreeNode) {
+                                            disagreeNode.click();
+                                            try { console.log('[AssessmentHelper] Clicked: disagree'); } catch (e) {}
+                                        } else {
+                                            try { console.log('[AssessmentHelper] Radio target missing for chosen option.'); } catch (e) {}
+                                        }
+                                    } catch (e) {
+                                        try { console.log('[AssessmentHelper] Error clicking radio:', e && e.message); } catch (ee) {}
+                                    }
+
+                                    // Attempt to submit or move forward same as MC flow
+                                    await new Promise(r => setTimeout(r, 400));
+                                    const submitButton = Array.from(document.querySelectorAll('button')).find((b) => b.textContent && b.textContent.trim() === 'Submit');
+                                    if (submitButton) {
+                                        submitButton.click();
+                                        await new Promise(r => setTimeout(r, 900));
+                                        const nextButton = document.getElementById('feedbackActivityFormBtn');
+                                        if (nextButton) {
+                                            nextButton.click();
+                                            // If next says Try again we might continue logic; mimic MC handling
+                                            await new Promise(r => setTimeout(r, 800));
+                                            const buttonText = nextButton.textContent ? nextButton.textContent.trim() : '';
+                                            if (buttonText === 'Try again') {
+                                                // If Try again, we attempt once more by recursion
+                                                return await attemptOnce([/* exclude none here for ready/reflect */]);
+                                            }
+                                        }
+                                    }
+
+                                    // Show result bubble
+                                    const answerContainerEl = document.getElementById('answerContainer');
+                                    const answerContentEl = answerContainerEl ? answerContainerEl.querySelector('#answerContent') : null;
+                                    if (answerContentEl) answerContentEl.textContent = normalized || classification;
+                                    if (answerContainerEl) { answerContainerEl.style.display = 'flex'; answerContainerEl.style.visibility = 'visible'; answerContainerEl.classList.add('show'); }
+
+                                    return false; // handled this attempt
+                                } else {
+                                    // No radios present — treat as writing target
+                                    // build writing prompt and behave like writing flow
+                                    let writingPrompt = `Please provide a detailed written answer based on the following question: ${readyQuestion}`;
+                                    const level = this.getWLevel();
+                                    if (level) writingPrompt += ` Use English level ${level}.`;
+                                    const minWords = this.getWMin();
+                                    const maxWords = this.getWMax();
+                                    if (minWords && maxWords) {
+                                        writingPrompt += ` Use minimum ${minWords} words and maximum ${maxWords} words.`;
+                                    } else if (minWords) {
+                                        writingPrompt += ` Use minimum ${minWords} words.`;
+                                    } else if (maxWords) {
+                                        writingPrompt += ` Use maximum ${maxWords} words.`;
+                                    }
+                                    const mood = this.getWMood();
+                                    if (mood) writingPrompt += ` ${mood}`;
+
+                                    // send
+                                    try {
+                                        console.groupCollapsed('[AssessmentHelper] Sent (Ready/Reflect writing) payload');
+                                        console.log('q:', writingPrompt);
+                                        console.log('article:', this.cachedArticle || null);
+                                        console.groupEnd();
+                                    } catch (e) {}
+
+                                    const answerTextRaw = await this.fetchAnswer(writingPrompt);
+
+                                    try {
+                                        console.groupCollapsed('[AssessmentHelper] Received (Ready/Reflect writing) answer (raw)');
+                                        console.log(answerTextRaw);
+                                        console.groupEnd();
+                                    } catch (e) {}
+
+                                    // post-process similarly to writing flow
+                                    let answerTextProcessed = String(answerTextRaw || '');
+                                    try {
+                                        const blacklist = this.getWBlacklist() || '';
+                                        if (blacklist && blacklist.length > 0) {
+                                            const chars = blacklist.split('').map(ch => ch.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')).join('|');
+                                            if (chars.length > 0) {
+                                                const re = new RegExp(chars, 'g');
+                                                answerTextProcessed = answerTextProcessed.replace(re, '');
+                                            }
+                                        }
+                                    } catch (e) {
+                                        try {
+                                            const blacklist = this.getWBlacklist() || '';
+                                            for (let i = 0; i < blacklist.length; i++) {
+                                                const ch = blacklist[i];
+                                                answerTextProcessed = answerTextProcessed.split(ch).join('');
+                                            }
+                                        } catch (e2) {}
+                                    }
+
+                                    if (this.getWLowercase()) {
+                                        answerTextProcessed = answerTextProcessed.toLowerCase();
+                                    }
+
+                                    try {
+                                        console.groupCollapsed('[AssessmentHelper] Received (Ready/Reflect writing) answer (processed)');
+                                        console.log(answerTextProcessed);
+                                        console.groupEnd();
+                                    } catch (e) {}
+
+                                    // Insert into editor/textarea/contentEditable
+                                    const tinyIframe = document.querySelector('.tox-edit-area__iframe');
+                                    const plainTextarea = document.querySelector('textarea');
+                                    const contentEditable = document.querySelector('[contenteditable="true"]');
+                                    try {
+                                        if (tinyIframe) {
+                                            const iframeDoc = tinyIframe.contentDocument || tinyIframe.contentWindow.document;
+                                            if (iframeDoc) {
+                                                iframeDoc.body.innerHTML = answerTextProcessed;
+                                                setTimeout(() => {
+                                                    iframeDoc.body.innerHTML += " ";
+                                                    const inputEvent = new Event('input', { bubbles: true });
+                                                    iframeDoc.body.dispatchEvent(inputEvent);
+                                                }, 500);
+                                            } else throw new Error('Unable to access iframe document');
+                                        } else if (plainTextarea) {
+                                            plainTextarea.value = answerTextProcessed;
+                                            plainTextarea.dispatchEvent(new Event('input', { bubbles: true }));
+                                        } else if (contentEditable) {
+                                            contentEditable.innerHTML = answerTextProcessed;
+                                            contentEditable.dispatchEvent(new Event('input', { bubbles: true }));
+                                        } else {
+                                            // no target to paste into — show in bubble
+                                            const answerContainerEl = document.getElementById('answerContainer');
+                                            const answerContentEl = answerContainerEl ? answerContainerEl.querySelector('#answerContent') : null;
+                                            if (answerContentEl) answerContentEl.textContent = answerTextProcessed;
+                                            if (answerContainerEl) { answerContainerEl.style.display = 'flex'; answerContainerEl.style.visibility = 'visible'; answerContainerEl.classList.add('show'); }
+                                        }
+
+                                        // stop after insertion
+                                        this._stoppedByWrite = true;
+                                        this.isRunning = false;
+                                        try { await this.stopProcessUI(); } catch (e) {}
+                                        return false;
+                                    } catch (e) {
+                                        const answerContainerEl = document.getElementById('answerContainer');
+                                        const answerContentEl = answerContainerEl ? answerContainerEl.querySelector('#answerContent') : null;
+                                        if (answerContentEl) answerContentEl.textContent = (typeof answerTextProcessed === 'string' ? answerTextProcessed : String(answerTextProcessed));
+                                        if (answerContainerEl) { answerContainerEl.style.display = 'flex'; answerContainerEl.style.visibility = 'visible'; answerContainerEl.classList.add('show'); }
+                                        this._stoppedByWrite = true;
+                                        this.isRunning = false;
+                                        try { await this.stopProcessUI(); } catch (e2) {}
+                                        return false;
+                                    }
+                                }
+                            } // end readyQuestion exists
+                        } // end URL contains ready/reflect
+                    } catch (e) {
+                        // fail safe: if something goes wrong here just continue normal flow
+                        console.warn('[AssessmentHelper] Ready/Reflect handler error', e && e.message);
+                    }
+
+                    // Detect writing target (original logic) — prefer TinyMCE iframe, then textarea, then contenteditable
                     const tinyIframe = document.querySelector('.tox-edit-area__iframe');
                     const plainTextarea = document.querySelector('textarea');
                     const contentEditable = document.querySelector('[contenteditable="true"]');
@@ -879,11 +1500,12 @@
                     const writingTarget = tinyIframe || plainTextarea || contentEditable || null;
 
                     if (writingTarget) {
-                        queryContent += "\n\nPlease provide a detailed written answer based on the above article and question.";
+                        // Writing flow (existing)
+                        let queryContentWriting = queryContent + "\n\nPlease provide a detailed written answer based on the above article and question.";
 
                         try {
                             console.groupCollapsed('[AssessmentHelper] Sent (writing) payload');
-                            console.log('q:', queryContent);
+                            console.log('q:', queryContentWriting);
                             console.log('article:', this.cachedArticle || null);
                             console.groupEnd();
                         } catch (e) {}
@@ -896,7 +1518,7 @@
                             console.groupEnd();
                         } catch (e) {}
 
-                        const answerText = await this.fetchAnswer(queryContent);
+                        const answerText = await this.fetchAnswer(queryContentWriting);
 
                         try {
                             console.groupCollapsed('[AssessmentHelper] Received (writing) answer');
@@ -943,12 +1565,13 @@
                             return false;
                         }
                     } else {
+                        // Multiple choice mode (existing)
                         queryContent += "\n\nPROVIDE ONLY A ONE-LETTER ANSWER THAT'S IT NOTHING ELSE (A, B, C, or D).";
                         if (excludedAnswers.length > 0) queryContent += `\n\nDo not pick letter ${excludedAnswers.join(', ')}.`;
 
                         try {
                             console.groupCollapsed('[AssessmentHelper] Sent (MC) payload');
-                            console.log('q:', queryContent);
+                            console.log(queryContent);
                             console.log('article:', this.cachedArticle || null);
                             console.groupEnd();
                         } catch (e) {}
@@ -1085,5 +1708,5 @@
         }
     }
 
-    try { new AssessmentHelper(); } catch (e) {}
+    try { new AssessmentHelper(); } catch (e) { console.error('[AssessmentHelper] init error', e); window.__AssessmentHelperActive = false; }
 })();
