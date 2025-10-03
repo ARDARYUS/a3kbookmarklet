@@ -1,4 +1,4 @@
-// Full AssessmentHelper with AI Settings + Groq chat-completion support
+// AssessmentHelper — settings expansion direction bugfix + writing settings features
 (function () {
     try { console.clear(); } catch (e) {}
     console.log('[AssessmentHelper] injected');
@@ -27,16 +27,19 @@
             this.animeScriptUrl = 'https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js';
             this.draggabillyScriptUrl = 'https://unpkg.com/draggabilly@3/dist/draggabilly.pkgd.min.js';
 
-            // cloudflare URL (default "url method")
             this.askEndpoint = 'https://f-ghost-insights-pressed.trycloudflare.com/ask';
-            this.dataEndpoint = 'https://f-ghost-insights-pressed.trycloudflare.com/data';
-
             this.assetBase = 'https://raw.githubusercontent.com/ARDARYUS/a3kbookmarklet/main/icons/';
 
             // Settings keys & defaults
             this.settingsKeys = {
                 mc_wait: 'ah_mc_wait_ms',
                 mc_random_pct: 'ah_mc_random_pct',
+                w_min: 'ah_w_min',
+                w_max: 'ah_w_max',
+                w_level: 'ah_w_level',
+                w_blacklist: 'ah_w_blacklist',
+                w_lowercase: 'ah_w_lowercase',
+                w_mood: 'ah_w_mood',
                 ai_use_api: 'ah_ai_use_api',
                 ai_groq_url: 'ah_ai_groq_url',
                 ai_groq_key: 'ah_ai_groq_key',
@@ -45,9 +48,12 @@
             this.defaults = {
                 mc_wait: 300,
                 mc_random_pct: 0,
-                ai_groq_model: 'llama-3.1-8b-instant',
-                // default storage for groq url if user chooses API - empty by default
-                ai_groq_url: ''
+                w_min: '',
+                w_max: '',
+                w_level: 'C1',
+                w_blacklist: '',
+                w_lowercase: false,
+                w_mood: ''
             };
 
             // UI state for settings: 'closed' | 'menu' | 'mc' | 'writing' | 'ai'
@@ -71,36 +77,32 @@
             try {
                 const v = localStorage.getItem(key);
                 if (v === null || v === undefined) return fallback;
-                // boolean stored as "true"/"false" handled by caller
+                // booleans handled separately by callers if needed
                 return v;
             } catch (e) { return fallback; }
         }
-        loadNumberSetting(key, fallback) {
-            try {
-                const v = localStorage.getItem(key);
-                if (v === null || v === undefined) return fallback;
-                const n = Number(v);
-                return Number.isFinite(n) ? n : fallback;
-            } catch (e) { return fallback; }
-        }
 
-        getMCWait() { return this.loadNumberSetting(this.settingsKeys.mc_wait, this.defaults.mc_wait); }
-        getMCRandomPct() { return this.loadNumberSetting(this.settingsKeys.mc_random_pct, this.defaults.mc_random_pct); }
+        // typed helpers
+        getMCWait() { return Number(localStorage.getItem(this.settingsKeys.mc_wait) || this.defaults.mc_wait); }
+        getMCRandomPct() { return Number(localStorage.getItem(this.settingsKeys.mc_random_pct) || this.defaults.mc_random_pct); }
         resetMCWait() { this.saveSetting(this.settingsKeys.mc_wait, this.defaults.mc_wait); }
         resetMCRandom() { this.saveSetting(this.settingsKeys.mc_random_pct, this.defaults.mc_random_pct); }
 
-        // AI settings helpers
-        setUseGroqApi(b) { this.saveSetting(this.settingsKeys.ai_use_api, b ? 'true' : 'false'); }
-        getUseGroqApi() {
-            const v = this.loadSetting(this.settingsKeys.ai_use_api, 'false');
-            return String(v) === 'true';
+        // writing settings helpers (string or number / boolean)
+        getWMin() { const v = localStorage.getItem(this.settingsKeys.w_min); return v === null ? '' : v; }
+        getWMax() { const v = localStorage.getItem(this.settingsKeys.w_max); return v === null ? '' : v; }
+        getWLevel() { return localStorage.getItem(this.settingsKeys.w_level) || this.defaults.w_level; }
+        getWBlacklist() { return localStorage.getItem(this.settingsKeys.w_blacklist) || this.defaults.w_blacklist; }
+        getWLowercase() { return (localStorage.getItem(this.settingsKeys.w_lowercase) === 'true'); }
+        getWMood() { return localStorage.getItem(this.settingsKeys.w_mood) || this.defaults.w_mood; }
+        resetWToDefaults() {
+            this.saveSetting(this.settingsKeys.w_min, '');
+            this.saveSetting(this.settingsKeys.w_max, '');
+            this.saveSetting(this.settingsKeys.w_level, this.defaults.w_level);
+            this.saveSetting(this.settingsKeys.w_blacklist, '');
+            this.saveSetting(this.settingsKeys.w_lowercase, this.defaults.w_lowercase ? 'true' : 'false');
+            this.saveSetting(this.settingsKeys.w_mood, '');
         }
-        setGroqUrl(u) { try { this.saveSetting(this.settingsKeys.ai_groq_url, u || ''); } catch (e) {} }
-        getGroqUrl() { return this.loadSetting(this.settingsKeys.ai_groq_url, this.defaults.ai_groq_url) || ''; }
-        setGroqKey(k) { try { this.saveSetting(this.settingsKeys.ai_groq_key, k || ''); } catch (e) {} }
-        getGroqKey() { return this.loadSetting(this.settingsKeys.ai_groq_key, '') || ''; }
-        setGroqModel(m) { try { this.saveSetting(this.settingsKeys.ai_groq_model, m || this.defaults.ai_groq_model); } catch (e) {} }
-        getGroqModel() { return this.loadSetting(this.settingsKeys.ai_groq_model, this.defaults.ai_groq_model) || this.defaults.ai_groq_model; }
 
         // -------- resources & element helpers --------
         getUrl(path) {
@@ -213,7 +215,7 @@
                 style: 'position:absolute;top:8px;right:8px;background:none;border:none;color:white;font-size:18px;cursor:pointer;padding:2px 8px;transition:color 0.12s ease, transform 0.1s ease;opacity:0.5;z-index:100005;'
             });
 
-            // Main action button
+            // Main action button: style like settings buttons (colors) with hover later
             const getAnswerButton = this.createEl('button', {
                 id: 'getAnswerButton',
                 style:
@@ -230,6 +232,7 @@
             getAnswerButton.appendChild(spinner);
             getAnswerButton.appendChild(buttonTextSpan);
 
+            // Version remains visible always
             const version = this.createEl('div', { id: 'ah-version', style: 'position:absolute;bottom:8px;right:8px;font-size:12px;opacity:0.9;z-index:100005', text: '1.0' });
 
             // SETTINGS COG (bottom-left)
@@ -271,13 +274,15 @@
                 #getAnswerButton.running { background: #1e1e1e; box-shadow: 0 4px 12px rgba(0,0,0,0.35); }
                 #getAnswerButton.running span { font-size:12px; opacity:0.95; }
                 #settingsPanel input[type="number"] { width:80px; padding:4px; border-radius:6px; border:1px solid rgba(255,255,255,0.08); background:transparent; color:white; }
-                #settingsPanel input[type="text"], #settingsPanel input[type="password"] { width:220px; padding:6px; border-radius:6px; border:1px solid rgba(255,255,255,0.08); background:transparent; color:white; }
                 #settingsPanel label { font-size:13px; margin-right:6px; }
                 .ah-reset { cursor:pointer; margin-left:8px; opacity:0.8; font-size:14px; user-select:none; }
                 .ah-section-title { font-weight:700; margin-top:4px; margin-bottom:6px; font-size:14px; }
                 #settingsPanel button { transition: background 0.12s ease, transform 0.08s ease; }
                 #settingsPanel button:hover { background:#222; transform: translateY(-1px); }
                 #getAnswerButton:hover { background: #1f1f1f !important; transform: translateY(-1px); }
+                /* small input / textarea styles */
+                #settingsPanel textarea { width:100%; min-height:60px; resize:vertical; padding:6px; border-radius:6px; border:1px solid rgba(255,255,255,0.06); background:transparent; color:white; }
+                #settingsPanel select { padding:6px; border-radius:6px; border:1px solid rgba(255,255,255,0.06); background:transparent; color:white; }
             `);
 
             return container;
@@ -384,114 +389,15 @@
             }
         }
 
-        // Unified fetchAnswer: either URL method (cloudflare) or Groq chat-completion API
         async fetchAnswer(queryContent, retryCount = 0) {
             const MAX_RETRIES = 3, RETRY_DELAY_MS = 1000;
             try {
-                // abort previous
                 if (this.currentAbortController) {
                     try { this.currentAbortController.abort(); } catch (e) {}
                 }
                 this.currentAbortController = new AbortController();
                 const signal = this.currentAbortController.signal;
 
-                // If user chose API method, use Groq chat-completion style
-                if (this.getUseGroqApi()) {
-                    const groqUrl = this.getGroqUrl();
-                    const groqKey = this.getGroqKey();
-                    const groqModel = this.getGroqModel() || this.defaults.ai_groq_model;
-
-                    if (!groqUrl || !groqKey) {
-                        this.currentAbortController = null;
-                        return 'Error: Groq API URL or Key not configured.';
-                    }
-
-                    const body = {
-                        model: groqModel,
-                        messages: [
-                            { role: 'user', content: queryContent }
-                        ],
-                        max_tokens: 1024,
-                        temperature: 0.0
-                    };
-
-                    const response = await fetch(groqUrl, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': `Bearer ${groqKey}`
-                        },
-                        body: JSON.stringify(body),
-                        signal
-                    });
-
-                    this.currentAbortController = null;
-
-                    if (!response.ok) {
-                        const text = await response.text().catch(() => '');
-                        if (response.status === 500 && text.includes("429 You exceeded your current quota") && retryCount < MAX_RETRIES) {
-                            await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
-                            return this.fetchAnswer(queryContent, retryCount + 1);
-                        }
-                        throw new Error(`API error ${response.status}: ${text}`);
-                    }
-
-                    const data = await response.json().catch(() => null);
-
-                    // Attempt to extract text from common response shapes:
-                    let text = null;
-                    if (data && typeof data === 'object') {
-                        if (data.output_text && typeof data.output_text === 'string') text = data.output_text;
-                        else if (typeof data.output === 'string') text = data.output;
-                        else if (data.response && typeof data.response === 'string') text = data.response;
-                        else if (data.answer && typeof data.answer === 'string') text = data.answer;
-                    }
-
-                    if (!text && data && Array.isArray(data.choices) && data.choices.length > 0) {
-                        const c0 = data.choices[0];
-                        if (c0.message && (c0.message.content || c0.message.content_text)) {
-                            if (typeof c0.message.content === 'string') text = c0.message.content;
-                            else if (Array.isArray(c0.message.content)) {
-                                text = c0.message.content.map(p => (p.text || p.content || '')).join('');
-                            } else if (typeof c0.message.content_text === 'string') {
-                                text = c0.message.content_text;
-                            }
-                        } else if (c0.text) {
-                            text = c0.text;
-                        } else if (c0.output && typeof c0.output === 'string') {
-                            text = c0.output;
-                        }
-                    }
-
-                    if (!text && data && Array.isArray(data.output)) {
-                        try {
-                            text = data.output.map(item => {
-                                if (!item) return '';
-                                if (typeof item === 'string') return item;
-                                if (item.content && typeof item.content === 'string') return item.content;
-                                if (item.content && Array.isArray(item.content)) {
-                                    return item.content.map(c => (c.text || c.content || '')).join('');
-                                }
-                                return '';
-                            }).join('\n');
-                            if (text === '') text = null;
-                        } catch (e) { text = null; }
-                    }
-
-                    if (!text && data && typeof data === 'string') text = data;
-
-                    if (!text) {
-                        try {
-                            text = data ? JSON.stringify(data) : 'No answer available';
-                        } catch (e) {
-                            text = 'No answer available';
-                        }
-                    }
-
-                    return String(text).trim();
-                }
-
-                // Otherwise: URL method (cloudflare / original endpoint)
                 const response = await fetch(this.askEndpoint, {
                     method: 'POST',
                     cache: 'no-cache',
@@ -511,7 +417,8 @@
                     throw new Error(`API error ${response.status}: ${text}`);
                 }
                 const data = await response.json().catch(() => null);
-                return data && (data.response || data.answer) ? String(data.response || data.answer).trim() : 'No answer available';
+                if (data && (data.response || data.answer)) return String(data.response || data.answer).trim();
+                return 'No answer available';
             } catch (err) {
                 if (err && err.name === 'AbortError') return '<<ABORTED>>';
                 return `Error: ${err && err.message ? err.message : String(err)}`;
@@ -672,21 +579,27 @@
         }
 
         _setLauncherWidthAndAnchor(widthPx, expandRight) {
+            // FIXED: compute new left so there is no small shift when expanding left
             const launcher = document.getElementById('Launcher');
             if (!launcher) return;
             const rect = launcher.getBoundingClientRect();
+
+            // ensure style.position fixed
+            launcher.style.position = 'fixed';
+
             if (expandRight) {
-                // Fix left and expand to the right
-                if (!launcher.style.left || launcher.style.left === '') {
-                    launcher.style.left = `${rect.left}px`;
-                }
+                // anchor by current left
+                const leftPx = rect.left;
+                launcher.style.left = `${leftPx}px`;
                 launcher.style.right = 'auto';
                 launcher.style.width = `${widthPx}px`;
             } else {
-                // Fix right and expand to the left
-                const rightCss = Math.round(window.innerWidth - rect.right);
-                launcher.style.right = `${rightCss}px`;
-                launcher.style.left = 'auto';
+                // anchor so the right edge stays where it was: set left = rect.right - widthPx
+                const newLeft = Math.round(rect.right - widthPx);
+                // Ensure newLeft not negative
+                const finalLeft = Math.max(0, newLeft);
+                launcher.style.left = `${finalLeft}px`;
+                launcher.style.right = 'auto';
                 launcher.style.width = `${widthPx}px`;
             }
         }
@@ -694,12 +607,14 @@
         _shrinkEyeToTopRight() {
             const eye = document.getElementById('helperEye');
             if (!eye) return;
+            // Save original once
             if (!this._eyeOriginal) {
                 this._eyeOriginal = {
                     style: eye.getAttribute('style') || '',
                     parentDisplay: eye.style.display || ''
                 };
             }
+            // Shrink and move under the X, inside the launcher
             eye.style.display = 'flex';
             eye.style.position = 'absolute';
             eye.style.top = '12px';
@@ -708,6 +623,7 @@
             eye.style.height = '48px';
             eye.style.marginTop = '0';
             eye.style.zIndex = '100004';
+            // also shrink internal img
             const img = document.getElementById('helperEyeImg');
             if (img) img.style.width = '100%';
         }
@@ -716,9 +632,11 @@
             const eye = document.getElementById('helperEye');
             if (!eye) return;
             if (this._eyeOriginal) {
+                // restore style string (safe)
                 eye.setAttribute('style', this._eyeOriginal.style);
                 this._eyeOriginal = null;
             } else {
+                // fallback restore approximate layout
                 eye.style.position = '';
                 eye.style.top = '';
                 eye.style.right = '';
@@ -769,18 +687,23 @@
         openSettingsMenu() {
             const launcher = document.getElementById('Launcher');
             if (!launcher) return;
+            const eye = document.getElementById('helperEye');
             const btn = document.getElementById('getAnswerButton');
 
+            // compute direction and set width to menu-size
             const expandRight = this._computeExpandRight();
             this._setLauncherWidthAndAnchor(360, expandRight);
 
+            // shrink eye but keep visible at top-right
             this._shrinkEyeToTopRight();
 
+            // fade out main items except version & close & cog/back
             if (btn) { btn.style.transition = 'opacity 0.12s'; btn.style.opacity = '0'; setTimeout(()=>btn.style.display='none',140); }
 
             const panel = document.getElementById('settingsPanel');
             if (panel) { panel.style.display = 'flex'; panel.style.opacity = '1'; }
 
+            // replace cog with back arrow
             const settingsCog = document.getElementById('settingsCog');
             const settingsBack = document.getElementById('settingsBack');
             if (settingsCog) settingsCog.style.display = 'none';
@@ -842,8 +765,72 @@
             const title = this.createEl('div', { className: 'ah-section-title', text: 'Writing Settings' });
             panel.appendChild(title);
 
-            const placeholder = this.createEl('div', { text: 'No settings available yet for writing. This area is reserved.', style: 'font-size:13px;opacity:0.85;margin-top:6px;' });
-            panel.appendChild(placeholder);
+            // min words
+            const minRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;' });
+            const minLabel = this.createEl('label', { text: 'Minimum words (optional):', style: 'min-width:160px;' });
+            const minInput = this.createEl('input', { type: 'number', id: 'wMinInput', value: String(this.getWMin()), placeholder: '', style: '' });
+            const minReset = this.createEl('span', { className: 'ah-reset', text: '↺', title: 'Reset to default' });
+            minReset.addEventListener('click', () => { this.saveSetting(this.settingsKeys.w_min, ''); minInput.value = ''; });
+
+            minRow.appendChild(minLabel); minRow.appendChild(minInput); minRow.appendChild(minReset);
+            panel.appendChild(minRow);
+
+            // max words
+            const maxRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;' });
+            const maxLabel = this.createEl('label', { text: 'Maximum words (optional):', style: 'min-width:160px;' });
+            const maxInput = this.createEl('input', { type: 'number', id: 'wMaxInput', value: String(this.getWMax()), placeholder: '', style: '' });
+            const maxReset = this.createEl('span', { className: 'ah-reset', text: '↺', title: 'Reset to default' });
+            maxReset.addEventListener('click', () => { this.saveSetting(this.settingsKeys.w_max, ''); maxInput.value = ''; });
+
+            maxRow.appendChild(maxLabel); maxRow.appendChild(maxInput); maxRow.appendChild(maxReset);
+            panel.appendChild(maxRow);
+
+            // english level dropdown
+            const levelRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;' });
+            const levelLabel = this.createEl('label', { text: 'English level:', style: 'min-width:160px;' });
+            const levelSelect = this.createEl('select', { id: 'wLevelSelect' });
+            ['A1','A2','B1','B2','C1','C2'].forEach(l => {
+                const opt = document.createElement('option'); opt.value = l; opt.text = l; levelSelect.appendChild(opt);
+            });
+            levelSelect.value = this.getWLevel();
+            levelRow.appendChild(levelLabel); levelRow.appendChild(levelSelect);
+            panel.appendChild(levelRow);
+
+            // blacklist characters
+            const blRow = this.createEl('div', { style: 'display:flex;flex-direction:row;align-items:center;gap:8px;margin-bottom:8px;width:100%;' });
+            const blLabel = this.createEl('label', { text: 'Blacklist characters:', style: 'min-width:160px;' });
+            const blInput = this.createEl('input', { type: 'text', id: 'wBlacklistInput', value: this.getWBlacklist(), placeholder: '\\*, ~, etc', style: 'flex:1;' });
+            const blReset = this.createEl('span', { className: 'ah-reset', text: '↺', title: 'Reset to default' });
+            blReset.addEventListener('click', () => { this.saveSetting(this.settingsKeys.w_blacklist, ''); blInput.value = ''; });
+
+            blRow.appendChild(blLabel); blRow.appendChild(blInput); blRow.appendChild(blReset);
+            panel.appendChild(blRow);
+
+            // lowercase checkbox
+            const lcRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;' });
+            const lcLabel = this.createEl('label', { text: 'Only lowercase (client-side):', style: 'min-width:160px;' });
+            const lcInput = this.createEl('input', { type: 'checkbox', id: 'wLowercaseInput' });
+            lcInput.checked = this.getWLowercase();
+            lcRow.appendChild(lcLabel); lcRow.appendChild(lcInput);
+            panel.appendChild(lcRow);
+
+            // mood / style textarea
+            const moodRow = this.createEl('div', { style: 'display:flex;flex-direction:column;gap:6px;margin-bottom:8px;width:100%;' });
+            const moodLabel = this.createEl('label', { text: 'AI writing style / mood (optional):', style: 'min-width:160px;' });
+            const moodInput = this.createEl('textarea', { id: 'wMoodInput', value: this.getWMood(), placeholder: 'e.g., Write concisely and politely, target an 11th-grade audience.' });
+            const moodReset = this.createEl('span', { className: 'ah-reset', text: '↺', title: 'Reset to default' });
+            moodReset.addEventListener('click', () => { this.saveSetting(this.settingsKeys.w_mood, ''); moodInput.value = ''; });
+
+            moodRow.appendChild(moodLabel); moodRow.appendChild(moodInput); moodRow.appendChild(moodReset);
+            panel.appendChild(moodRow);
+
+            // save listeners
+            levelSelect.addEventListener('change', () => { this.saveSetting(this.settingsKeys.w_level, levelSelect.value); });
+            blInput.addEventListener('change', () => { this.saveSetting(this.settingsKeys.w_blacklist, blInput.value || ''); });
+            lcInput.addEventListener('change', () => { this.saveSetting(this.settingsKeys.w_lowercase, lcInput.checked ? 'true' : 'false'); });
+            moodInput.addEventListener('change', () => { this.saveSetting(this.settingsKeys.w_mood, moodInput.value || ''); });
+            minInput.addEventListener('change', () => { this.saveSetting(this.settingsKeys.w_min, minInput.value || ''); });
+            maxInput.addEventListener('change', () => { this.saveSetting(this.settingsKeys.w_max, maxInput.value || ''); });
         }
 
         openAISettings() {
@@ -857,82 +844,53 @@
             const title = this.createEl('div', { className: 'ah-section-title', text: 'AI Settings' });
             panel.appendChild(title);
 
-            // Show the default fixed URL (cloudflare) and the toggle
-            const defaultUrlRow = this.createEl('div', { style: 'display:flex;flex-direction:column;gap:6px;margin-bottom:8px;' });
-            const defaultLabel = this.createEl('label', { text: 'Default (URL method) endpoint (fixed):', style: 'font-size:12px;opacity:0.85;' });
-            const defaultUrlDisplay = this.createEl('div', { text: this.askEndpoint, style: 'font-size:12px;opacity:0.9;padding:6px;border-radius:6px;border:1px solid rgba(255,255,255,0.04);background:transparent;word-break:break-all;' });
-            defaultUrlRow.appendChild(defaultLabel);
-            defaultUrlRow.appendChild(defaultUrlDisplay);
-            panel.appendChild(defaultUrlRow);
+            // default method display (the URL method is hard-coded, but UI allows toggling)
+            const methodRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;' });
+            const methodLabel = this.createEl('label', { text: 'Use direct API (toggle):', style: 'min-width:160px;' });
+            const methodToggle = this.createEl('input', { type: 'checkbox', id: 'aiUseApiToggle' });
+            // read saved setting (string 'true'/'false')
+            const useApiStored = localStorage.getItem(this.settingsKeys.ai_use_api);
+            methodToggle.checked = (useApiStored === 'true');
+            methodRow.appendChild(methodLabel); methodRow.appendChild(methodToggle);
+            panel.appendChild(methodRow);
 
-            // Toggle to use API method instead of URL method
-            const toggleRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;' });
-            const toggleLabel = this.createEl('label', { text: 'Use API method (Groq/chat-completion):', style: 'min-width:200px;' });
-            const toggleInput = this.createEl('input', { type: 'checkbox', id: 'aiUseApiCheckbox' });
-            const toggleHint = this.createEl('span', { text: '(if OFF, URL method used)', style: 'font-size:12px;opacity:0.8;' });
+            // groq url (editable but default points to cloudflare when toggled off in earlier versions)
+            const urlRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;width:100%;' });
+            const urlLabel = this.createEl('label', { text: 'Groq URL:', style: 'min-width:160px;' });
+            const urlInput = this.createEl('input', { type: 'text', id: 'aiGroqUrlInput', value: localStorage.getItem(this.settingsKeys.ai_groq_url) || 'https://api.groq.com/openai/v1/chat/completions', style: 'flex:1;' });
+            const urlReset = this.createEl('span', { className: 'ah-reset', text: '↺', title: 'Reset to default' });
+            urlReset.addEventListener('click', () => { urlInput.value = 'https://api.groq.com/openai/v1/chat/completions'; this.saveSetting(this.settingsKeys.ai_groq_url, urlInput.value); });
 
-            // set checkbox from storage
-            toggleInput.checked = !!this.getUseGroqApi();
-            toggleInput.addEventListener('change', () => {
-                this.setUseGroqApi(toggleInput.checked);
-                // rebuild to show/hide API fields
-                this.openAISettings();
-            });
+            urlRow.appendChild(urlLabel); urlRow.appendChild(urlInput); urlRow.appendChild(urlReset);
+            panel.appendChild(urlRow);
 
-            toggleRow.appendChild(toggleLabel); toggleRow.appendChild(toggleInput); toggleRow.appendChild(toggleHint);
-            panel.appendChild(toggleRow);
+            // api key (stored locally)
+            const keyRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;width:100%;' });
+            const keyLabel = this.createEl('label', { text: 'Groq API key:', style: 'min-width:160px;' });
+            const keyInput = this.createEl('input', { type: 'text', id: 'aiGroqKeyInput', value: localStorage.getItem(this.settingsKeys.ai_groq_key) || '', placeholder: 'paste your key here', style: 'flex:1;' });
+            const keyReset = this.createEl('span', { className: 'ah-reset', text: '↺', title: 'Clear key' });
+            keyReset.addEventListener('click', () => { keyInput.value = ''; localStorage.removeItem(this.settingsKeys.ai_groq_key); });
 
-            // API config area (shown only if toggleInput.checked)
-            const apiArea = this.createEl('div', { id: 'aiApiArea', style: toggleInput.checked ? 'display:flex;flex-direction:column;gap:8px;' : 'display:none;' });
+            keyRow.appendChild(keyLabel); keyRow.appendChild(keyInput); keyRow.appendChild(keyReset);
+            panel.appendChild(keyRow);
 
-            // API URL field
-            const apiUrlRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;' });
-            const apiUrlLabel = this.createEl('label', { text: 'API URL (Groq endpoint):', style: 'min-width:140px;' });
-            const apiUrlInput = this.createEl('input', { type: 'text', id: 'aiGroqUrlInput', value: this.getGroqUrl() || '', placeholder: 'https://api.groq.cloud/v1/...' });
-            const apiUrlReset = this.createEl('span', { className: 'ah-reset', text: '↺', title: 'Clear' });
-            apiUrlReset.addEventListener('click', () => { apiUrlInput.value = ''; this.setGroqUrl(''); });
+            // model row
+            const modelRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;width:100%;' });
+            const modelLabel = this.createEl('label', { text: 'Model:', style: 'min-width:160px;' });
+            const modelInput = this.createEl('input', { type: 'text', id: 'aiGroqModelInput', value: localStorage.getItem(this.settingsKeys.ai_groq_model) || 'llama-3.1-8b-instant', style: 'flex:1;' });
+            modelRow.appendChild(modelLabel); modelRow.appendChild(modelInput);
+            panel.appendChild(modelRow);
 
-            apiUrlRow.appendChild(apiUrlLabel); apiUrlRow.appendChild(apiUrlInput); apiUrlRow.appendChild(apiUrlReset);
-            apiArea.appendChild(apiUrlRow);
+            // save changes bindings
+            methodToggle.addEventListener('change', () => { this.saveSetting(this.settingsKeys.ai_use_api, methodToggle.checked ? 'true' : 'false'); });
+            urlInput.addEventListener('change', () => { this.saveSetting(this.settingsKeys.ai_groq_url, urlInput.value || ''); });
+            keyInput.addEventListener('change', () => { this.saveSetting(this.settingsKeys.ai_groq_key, keyInput.value || ''); });
+            modelInput.addEventListener('change', () => { this.saveSetting(this.settingsKeys.ai_groq_model, modelInput.value || 'llama-3.1-8b-instant'); });
 
-            // API Key field (stored locally)
-            const apiKeyRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;' });
-            const apiKeyLabel = this.createEl('label', { text: 'API Key:', style: 'min-width:140px;' });
-            const apiKeyInput = this.createEl('input', { type: 'password', id: 'aiGroqKeyInput', value: this.getGroqKey() || '', placeholder: 'paste API key (stored locally)' });
-            const apiKeyReset = this.createEl('span', { className: 'ah-reset', text: '↺', title: 'Clear' });
-            apiKeyReset.addEventListener('click', () => { apiKeyInput.value = ''; this.setGroqKey(''); });
-
-            apiKeyRow.appendChild(apiKeyLabel); apiKeyRow.appendChild(apiKeyInput); apiKeyRow.appendChild(apiKeyReset);
-            apiArea.appendChild(apiKeyRow);
-
-            // Model selection (default 'llama-3.1-8b-instant')
-            const modelRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;' });
-            const modelLabel = this.createEl('label', { text: 'Model:', style: 'min-width:140px;' });
-            const modelInput = this.createEl('input', { type: 'text', id: 'aiGroqModelInput', value: this.getGroqModel() || this.defaults.ai_groq_model });
-            const modelReset = this.createEl('span', { className: 'ah-reset', text: '↺', title: 'Reset to default' });
-            modelReset.addEventListener('click', () => { modelInput.value = this.defaults.ai_groq_model; this.setGroqModel(this.defaults.ai_groq_model); });
-
-            modelRow.appendChild(modelLabel); modelRow.appendChild(modelInput); modelRow.appendChild(modelReset);
-            apiArea.appendChild(modelRow);
-
-            // Save button for API settings
-            const apiSaveRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-top:8px;' });
-            const apiSaveBtn = this.createEl('button', { text: 'Save AI settings', style: 'padding:8px 10px;border-radius:8px;background:#151515;border:1px solid rgba(255,255,255,0.04);color:white;cursor:pointer;' });
-            apiSaveBtn.addEventListener('click', () => {
-                const urlVal = (apiUrlInput.value || '').trim();
-                const keyVal = (apiKeyInput.value || '').trim();
-                const modelVal = (modelInput.value || '').trim() || this.defaults.ai_groq_model;
-                this.setGroqUrl(urlVal);
-                this.setGroqKey(keyVal);
-                this.setGroqModel(modelVal);
-                // persist toggle state already saved; give feedback
-                this.showAlert('AI settings saved (locally).');
-            });
-
-            apiSaveRow.appendChild(apiSaveBtn);
-            apiArea.appendChild(apiSaveRow);
-
-            panel.appendChild(apiArea);
+            // initialize saved
+            this.saveSetting(this.settingsKeys.ai_groq_url, urlInput.value);
+            this.saveSetting(this.settingsKeys.ai_groq_model, modelInput.value);
+            if (keyInput.value) this.saveSetting(this.settingsKeys.ai_groq_key, keyInput.value);
         }
 
         backFromSettings() {
@@ -960,8 +918,10 @@
                 // restore cog/back
                 if (settingsBack) { settingsBack.style.opacity = '0'; setTimeout(()=>settingsBack.style.display='none',120); }
                 if (settingsCog) settingsCog.style.display = 'block';
+                // shrink launcher back (restore to default 180)
                 const expandRight = this._computeExpandRight();
                 this._setLauncherWidthAndAnchor(180, expandRight);
+                // restore eye full size & original placement
                 this._restoreEyeFromShrink();
                 this.settingsState = 'closed';
                 return;
@@ -1096,11 +1056,31 @@
                     const writingTarget = tinyIframe || plainTextarea || contentEditable || null;
 
                     if (writingTarget) {
-                        queryContent += "\n\nPlease provide a detailed written answer based on the above article and question.";
+                        // Build writing-specific prompt with optional settings
+                        let writingPrompt = "Please provide a detailed written answer based on the above article and question.";
+
+                        const level = this.getWLevel();
+                        if (level) writingPrompt += ` Use English level ${level}.`;
+
+                        const minWords = this.getWMin();
+                        const maxWords = this.getWMax();
+                        if (minWords && maxWords) {
+                            // both present
+                            writingPrompt += ` Use minimum ${minWords} words and maximum ${maxWords} words.`;
+                        } else if (minWords) {
+                            writingPrompt += ` Use minimum ${minWords} words.`;
+                        } else if (maxWords) {
+                            writingPrompt += ` Use maximum ${maxWords} words.`;
+                        }
+
+                        const mood = this.getWMood();
+                        if (mood) writingPrompt += ` ${mood}`;
+
+                        queryContent += `\n\n${writingPrompt}`;
 
                         try {
                             console.groupCollapsed('[AssessmentHelper] Sent (writing) payload');
-                            console.log('q:', queryContent);
+                            console.log(queryContent);
                             console.log('article:', this.cachedArticle || null);
                             console.groupEnd();
                         } catch (e) {}
@@ -1113,11 +1093,46 @@
                             console.groupEnd();
                         } catch (e) {}
 
-                        const answerText = await this.fetchAnswer(queryContent);
+                        // make the request
+                        const answerTextRaw = await this.fetchAnswer(queryContent);
 
                         try {
-                            console.groupCollapsed('[AssessmentHelper] Received (writing) answer');
-                            console.log(answerText);
+                            console.groupCollapsed('[AssessmentHelper] Received (writing) answer (raw)');
+                            console.log(answerTextRaw);
+                            console.groupEnd();
+                        } catch (e) {}
+
+                        // Post-process answer: remove blacklisted characters, optionally lowercase
+                        let answerTextProcessed = String(answerTextRaw || '');
+                        try {
+                            const blacklist = this.getWBlacklist() || '';
+                            if (blacklist && blacklist.length > 0) {
+                                // remove each character in blacklist globally
+                                // build a regex that escapes special chars
+                                const chars = blacklist.split('').map(ch => ch.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')).join('|');
+                                if (chars.length > 0) {
+                                    const re = new RegExp(chars, 'g');
+                                    answerTextProcessed = answerTextProcessed.replace(re, '');
+                                }
+                            }
+                        } catch (e) {
+                            // if regex fails, fallback to simple removal loop
+                            try {
+                                const blacklist = this.getWBlacklist() || '';
+                                for (let i = 0; i < blacklist.length; i++) {
+                                    const ch = blacklist[i];
+                                    answerTextProcessed = answerTextProcessed.split(ch).join('');
+                                }
+                            } catch (e2) {}
+                        }
+
+                        if (this.getWLowercase()) {
+                            answerTextProcessed = answerTextProcessed.toLowerCase();
+                        }
+
+                        try {
+                            console.groupCollapsed('[AssessmentHelper] Received (writing) answer (processed)');
+                            console.log(answerTextProcessed);
                             console.groupEnd();
                         } catch (e) {}
 
@@ -1127,7 +1142,7 @@
                             if (tinyIframe) {
                                 const iframeDoc = tinyIframe.contentDocument || tinyIframe.contentWindow.document;
                                 if (iframeDoc) {
-                                    iframeDoc.body.innerHTML = answerText;
+                                    iframeDoc.body.innerHTML = answerTextProcessed;
                                     setTimeout(() => {
                                         iframeDoc.body.innerHTML += " ";
                                         const inputEvent = new Event('input', { bubbles: true });
@@ -1137,10 +1152,10 @@
                                     throw new Error('Unable to access iframe document');
                                 }
                             } else if (plainTextarea) {
-                                plainTextarea.value = answerText;
+                                plainTextarea.value = answerTextProcessed;
                                 plainTextarea.dispatchEvent(new Event('input', { bubbles: true }));
                             } else if (contentEditable) {
-                                contentEditable.innerHTML = answerText;
+                                contentEditable.innerHTML = answerTextProcessed;
                                 contentEditable.dispatchEvent(new Event('input', { bubbles: true }));
                             }
 
@@ -1152,7 +1167,7 @@
                         } catch (e) {
                             const answerContainerEl = document.getElementById('answerContainer');
                             const answerContentEl = answerContainerEl ? answerContainerEl.querySelector('#answerContent') : null;
-                            if (answerContentEl) answerContentEl.textContent = (typeof answerText === 'string' ? answerText : String(answerText));
+                            if (answerContentEl) answerContentEl.textContent = (typeof answerTextProcessed === 'string' ? answerTextProcessed : String(answerTextProcessed));
                             if (answerContainerEl) { answerContainerEl.style.display = 'flex'; answerContainerEl.style.visibility = 'visible'; answerContainerEl.classList.add('show'); }
                             this._stoppedByWrite = true;
                             this.isRunning = false;
@@ -1165,7 +1180,7 @@
 
                         try {
                             console.groupCollapsed('[AssessmentHelper] Sent (MC) payload');
-                            console.log('q:', queryContent);
+                            console.log(queryContent);
                             console.log('article:', this.cachedArticle || null);
                             console.groupEnd();
                         } catch (e) {}
