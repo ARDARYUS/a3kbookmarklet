@@ -1,5 +1,4 @@
-// AssessmentHelper — persist position, destroy on close, cleanup listeners (drop-in replacement)
-// + Ready/Reflect handling + prompt sanitization for dynamic "Type your response..." boilerplate
+// AssessmentHelper — Ready/Reflect: click radio but do NOT submit; then write justification in TinyMCE or other editor
 (function () {
     try { console.clear(); } catch (e) {}
     console.log('[AssessmentHelper] injected');
@@ -8,16 +7,10 @@
         if (document.getElementById('Launcher')) {
             return;
         }
-        if (window.__AssessmentHelperActive) {
-            // another helper instance flagged active (guard)
-            return;
-        }
-        window.__AssessmentHelperActive = true;
     } catch (e) {}
 
     class AssessmentHelper {
         constructor() {
-            // internal state
             this.answerIsDragging = false;
             this.answerInitialX = 0;
             this.answerInitialY = 0;
@@ -30,9 +23,6 @@
 
             this.eyeState = 'sleep';
             this.currentVideo = null;
-
-            this._draggie = null;
-            this._launcherManualDragging = false;
 
             this.animeScriptUrl = 'https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js';
             this.draggabillyScriptUrl = 'https://unpkg.com/draggabilly@3/dist/draggabilly.pkgd.min.js';
@@ -72,17 +62,6 @@
             // store original eye style so we can restore after settings
             this._eyeOriginal = null;
 
-            // store anchor used when settings opened so restore is consistent (prevents twitch)
-            this._lastAnchorAtOpen = undefined;
-
-            // handlers to remove later
-            this._answerMouseMove = null;
-            this._answerMouseUp = null;
-            this._answerMouseLeave = null;
-            this._launcherMouseMove = null;
-            this._launcherMouseUp = null;
-            this._dragHandleMouseDown = null;
-
             if (document.readyState === 'loading') {
                 document.addEventListener('DOMContentLoaded', () => this.init());
             } else {
@@ -120,75 +99,6 @@
             this.saveSetting(this.settingsKeys.w_blacklist, '');
             this.saveSetting(this.settingsKeys.w_lowercase, this.defaults.w_lowercase ? 'true' : 'false');
             this.saveSetting(this.settingsKeys.w_mood, '');
-        }
-
-        // -------- prompt sanitization helper --------
-        _sanitizeText(text) {
-            try {
-                if (!text || typeof text !== 'string') return text;
-                // exact start and end phrases provided by user
-                const startPhrase = 'Type your response into the box, and then click Submit.';
-                const endPhrase = 'Press Alt + F10 to reach toolbarSystem Font12ptSubmit';
-                // Build regex to capture startPhrase ... endPhrase (including them), single-line or multi-line
-                const re = new RegExp(startPhrase.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&') + '[\\s\\S]*?' + endPhrase.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&'), 'g');
-                return text.replace(re, '').trim();
-            } catch (e) {
-                return text;
-            }
-        }
-
-        // -------- position persistence helpers --------
-        _saveLauncherPositionFromRect() {
-            const launcher = document.getElementById('Launcher');
-            if (!launcher) return;
-            const rect = launcher.getBoundingClientRect();
-            const distanceToLeft = rect.left;
-            const distanceToRight = window.innerWidth - rect.right;
-            const anchor = (distanceToLeft <= distanceToRight) ? 'left' : 'right';
-            try {
-                if (anchor === 'left') {
-                    localStorage.setItem('ah_pos_anchor', 'left');
-                    localStorage.setItem('ah_pos_left', String(Math.round(rect.left)));
-                    localStorage.removeItem('ah_pos_right');
-                } else {
-                    localStorage.setItem('ah_pos_anchor', 'right');
-                    const rightCss = Math.round(window.innerWidth - rect.right);
-                    localStorage.setItem('ah_pos_right', String(rightCss));
-                    localStorage.removeItem('ah_pos_left');
-                }
-                localStorage.setItem('ah_pos_top', String(Math.round(rect.top)));
-            } catch (e) {}
-        }
-
-        _applyLauncherPositionFromStorage() {
-            const launcher = document.getElementById('Launcher');
-            if (!launcher) return;
-            const anchor = localStorage.getItem('ah_pos_anchor');
-            const top = localStorage.getItem('ah_pos_top');
-            const left = localStorage.getItem('ah_pos_left');
-            const right = localStorage.getItem('ah_pos_right');
-
-            // reset width handling so anchor calculation stable
-            launcher.style.position = 'fixed';
-
-            if (anchor === 'right' && right !== null) {
-                launcher.style.right = `${Number(right)}px`;
-                launcher.style.left = 'auto';
-            } else if (anchor === 'left' && left !== null) {
-                launcher.style.left = `${Number(left)}px`;
-                launcher.style.right = 'auto';
-            } else {
-                // nothing saved - keep default (left:20px) already set in creation
-            }
-
-            if (top !== null) {
-                launcher.style.top = `${Number(top)}px`;
-                // ensure transform vertical centering isn't interfering
-                launcher.style.transform = 'translateY(0)';
-            } else {
-                // keep default translateY(-50%)
-                launcher.style.transform = 'translateY(-50%)';
-            }
         }
 
         // -------- resources & element helpers --------
@@ -258,7 +168,6 @@
         createUI() {
             const container = this.createEl('div');
 
-            // default spawn on LEFT side now (left:20px)
             const launcher = this.createEl('div', {
                 id: 'Launcher',
                 className: 'Launcher',
@@ -303,7 +212,7 @@
                 style: 'position:absolute;top:8px;right:8px;background:none;border:none;color:white;font-size:18px;cursor:pointer;padding:2px 8px;transition:color 0.12s ease, transform 0.1s ease;opacity:0.5;z-index:100005;'
             });
 
-            // Main action button
+            // Main action button: style like settings buttons (colors) with hover later
             const getAnswerButton = this.createEl('button', {
                 id: 'getAnswerButton',
                 style:
@@ -328,7 +237,7 @@
                 id: 'settingsCog',
                 title: 'Settings',
                 innerHTML: '⚙',
-                style: 'position:absolute;bottom:8px;left:8px;background:none;border:none;color:#cfcfcf;font-size:16px;cursor:pointer;opacity:0.85;padding:2px;transition:transform .12s;z-index:100005;transform-origin:50% 50%;'
+                style: 'position:absolute;bottom:8px;left:8px;background:none;border:none;color:#cfcfcf;font-size:16px;cursor:pointer;opacity:0.85;padding:2px;transition:transform .12s;z-index:100005'
             });
 
             // BACK ARROW (same spot, initially hidden)
@@ -342,7 +251,7 @@
             // Settings menu container (hidden by default)
             const settingsPanel = this.createEl('div', {
                 id: 'settingsPanel',
-                style: 'position:absolute;top:48px;left:12px;right:12px;bottom:48px;display:none;flex-direction:column;align-items:flex-start;gap:8px;overflow:auto;opacity:0;transition:opacity .18s;'
+                style: 'position:absolute;top:48px;left:12px;right:12px;bottom:48px;display:none;flex-direction:column;align-items:flex-start;gap:8px;overflow:auto;'
             });
 
             launcher.appendChild(dragHandle);
@@ -356,7 +265,7 @@
 
             container.appendChild(launcher);
 
-            // spinner keyframes & minor styles + hover rules for buttons & settings + cog hover rotation
+            // spinner keyframes & minor styles + hover rules for buttons & settings
             this.applyStylesOnce('assessment-helper-spinner-styles', `
                 @keyframes ah-spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
                 #getAnswerButton.running { background: #1e1e1e; box-shadow: 0 4px 12px rgba(0,0,0,0.35); }
@@ -370,9 +279,6 @@
                 #getAnswerButton:hover { background: #1f1f1f !important; transform: translateY(-1px); }
                 #settingsCog { transition: transform 0.12s ease, opacity 0.12s ease; }
                 #settingsCog:hover { transform: rotate(22.5deg); }
-                /* small input / textarea styles */
-                #settingsPanel textarea { width:100%; min-height:60px; resize:vertical; padding:6px; border-radius:6px; border:1px solid rgba(255,255,255,0.06); background:transparent; color:white; }
-                #settingsPanel select { padding:6px; border-radius:6px; border:1px solid rgba(255,255,255,0.06); background:transparent; color:white; }
             `);
 
             return container;
@@ -427,10 +333,6 @@
             try { document.body.appendChild(this.itemMetadata.UI); document.body.appendChild(this.itemMetadata.answerUI); } catch (e) {}
             const launcher = document.getElementById('Launcher');
             if (!launcher) { this.setupEventListeners(); return; }
-
-            // Apply saved position if it exists
-            this._applyLauncherPositionFromStorage();
-
             if (skipAnimation) {
                 launcher.style.visibility = 'visible';
                 launcher.style.opacity = 1;
@@ -475,8 +377,7 @@
                     writingQuestion = '';
                 }
 
-                let combinedContent = `${articleContent}\n\n${questionContent}\n\n${writingQuestion}`;
-                combinedContent = this._sanitizeText(combinedContent);
+                const combinedContent = `${articleContent}\n\n${questionContent}\n\n${writingQuestion}`;
                 this.cachedArticle = combinedContent;
                 return combinedContent;
             } catch (err) {
@@ -493,14 +394,11 @@
                 this.currentAbortController = new AbortController();
                 const signal = this.currentAbortController.signal;
 
-                // sanitize queryContent as well just before sending
-                const sanitizedQuery = this._sanitizeText(queryContent || '');
-
                 const response = await fetch(this.askEndpoint, {
                     method: 'POST',
                     cache: 'no-cache',
                     headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ q: sanitizedQuery, article: this.cachedArticle || null }),
+                    body: JSON.stringify({ q: queryContent, article: this.cachedArticle || null }),
                     signal
                 });
 
@@ -523,7 +421,7 @@
             }
         }
 
-        // -------- Eye helpers (unchanged) --------
+        // -------- Eye helpers --------
         setEyeToSleep() {
             if (this.eyeState === 'full') return;
             try {
@@ -633,7 +531,7 @@
             } catch (err) {}
         }
 
-        // -------- UI start/stop (unchanged) --------
+        // -------- UI start/stop --------
         async startProcessUI() {
             const btn = document.getElementById('getAnswerButton');
             const spinner = document.getElementById('ah-spinner');
@@ -665,7 +563,7 @@
             }
         }
 
-        // -------- Settings UI flows with directional expansion & eye shrink (unchanged) --------
+        // -------- Settings UI flows with directional expansion & eye shrink --------
         _computeExpandRight() {
             const launcher = document.getElementById('Launcher');
             if (!launcher) return true;
@@ -680,37 +578,31 @@
             const launcher = document.getElementById('Launcher');
             if (!launcher) return;
             const rect = launcher.getBoundingClientRect();
-
-            // ensure style.position fixed
-            launcher.style.position = 'fixed';
-
             if (expandRight) {
-                // anchor by current left
-                const leftPx = rect.left;
-                launcher.style.left = `${leftPx}px`;
+                // Fix left and expand to the right
+                launcher.style.left = `${rect.left}px`;
                 launcher.style.right = 'auto';
                 launcher.style.width = `${widthPx}px`;
             } else {
-                // anchor by current right: compute distance from right edge and set right CSS to keep right edge stable
+                // Fix right and expand to the left
                 const rightCss = Math.round(window.innerWidth - rect.right);
                 launcher.style.right = `${rightCss}px`;
                 launcher.style.left = 'auto';
                 launcher.style.width = `${widthPx}px`;
             }
-
-            // save last anchor for consistent close/restore behavior
-            this._lastAnchorAtOpen = expandRight;
         }
 
         _shrinkEyeToTopRight() {
             const eye = document.getElementById('helperEye');
             if (!eye) return;
+            // Save original once
             if (!this._eyeOriginal) {
                 this._eyeOriginal = {
                     style: eye.getAttribute('style') || '',
                     parentDisplay: eye.style.display || ''
                 };
             }
+            // Shrink and move under the X, inside the launcher
             eye.style.display = 'flex';
             eye.style.position = 'absolute';
             eye.style.top = '12px';
@@ -719,6 +611,7 @@
             eye.style.height = '48px';
             eye.style.marginTop = '0';
             eye.style.zIndex = '100004';
+            // also shrink internal img
             const img = document.getElementById('helperEyeImg');
             if (img) img.style.width = '100%';
         }
@@ -727,9 +620,11 @@
             const eye = document.getElementById('helperEye');
             if (!eye) return;
             if (this._eyeOriginal) {
+                // restore style string (safe)
                 eye.setAttribute('style', this._eyeOriginal.style);
                 this._eyeOriginal = null;
             } else {
+                // fallback restore approximate layout
                 eye.style.position = '';
                 eye.style.top = '';
                 eye.style.right = '';
@@ -780,25 +675,21 @@
         openSettingsMenu() {
             const launcher = document.getElementById('Launcher');
             if (!launcher) return;
+            const eye = document.getElementById('helperEye');
             const btn = document.getElementById('getAnswerButton');
 
             // compute direction and set width to menu-size
             const expandRight = this._computeExpandRight();
-            this._lastAnchorAtOpen = expandRight;
             this._setLauncherWidthAndAnchor(360, expandRight);
 
             // shrink eye but keep visible at top-right
             this._shrinkEyeToTopRight();
 
             // fade out main items except version & close & cog/back
-            if (btn) {
-                btn.style.transition = 'opacity 0.12s';
-                btn.style.opacity = '0';
-                setTimeout(()=>{ btn.style.display='none'; }, 160);
-            }
+            if (btn) { btn.style.transition = 'opacity 0.12s'; btn.style.opacity = '0'; setTimeout(()=>btn.style.display='none',140); }
 
             const panel = document.getElementById('settingsPanel');
-            if (panel) { panel.style.display = 'flex'; setTimeout(()=>{ panel.style.opacity = '1'; }, 10); }
+            if (panel) { panel.style.display = 'flex'; panel.style.opacity = '1'; }
 
             // replace cog with back arrow
             const settingsCog = document.getElementById('settingsCog');
@@ -812,7 +703,7 @@
 
         openMCSettings() {
             const panel = document.getElementById('settingsPanel');
-            const expandRight = (this._lastAnchorAtOpen !== undefined) ? this._lastAnchorAtOpen : this._computeExpandRight();
+            const expandRight = this._computeExpandRight();
             this._setLauncherWidthAndAnchor(520, expandRight);
             if (!panel) return;
             panel.innerHTML = '';
@@ -853,7 +744,7 @@
 
         openWritingSettings() {
             const panel = document.getElementById('settingsPanel');
-            const expandRight = (this._lastAnchorAtOpen !== undefined) ? this._lastAnchorAtOpen : this._computeExpandRight();
+            const expandRight = this._computeExpandRight();
             this._setLauncherWidthAndAnchor(520, expandRight);
             this.settingsState = 'writing';
             if (!panel) return;
@@ -862,7 +753,6 @@
             const title = this.createEl('div', { className: 'ah-section-title', text: 'Writing Settings' });
             panel.appendChild(title);
 
-            // min words
             const minRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;' });
             const minLabel = this.createEl('label', { text: 'Minimum words (optional):', style: 'min-width:160px;' });
             const minInput = this.createEl('input', { type: 'number', id: 'wMinInput', value: String(this.getWMin()), placeholder: '', style: '' });
@@ -872,7 +762,6 @@
             minRow.appendChild(minLabel); minRow.appendChild(minInput); minRow.appendChild(minReset);
             panel.appendChild(minRow);
 
-            // max words
             const maxRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;' });
             const maxLabel = this.createEl('label', { text: 'Maximum words (optional):', style: 'min-width:160px;' });
             const maxInput = this.createEl('input', { type: 'number', id: 'wMaxInput', value: String(this.getWMax()), placeholder: '', style: '' });
@@ -882,7 +771,6 @@
             maxRow.appendChild(maxLabel); maxRow.appendChild(maxInput); maxRow.appendChild(maxReset);
             panel.appendChild(maxRow);
 
-            // english level dropdown
             const levelRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;' });
             const levelLabel = this.createEl('label', { text: 'English level:', style: 'min-width:160px;' });
             const levelSelect = this.createEl('select', { id: 'wLevelSelect' });
@@ -893,7 +781,6 @@
             levelRow.appendChild(levelLabel); levelRow.appendChild(levelSelect);
             panel.appendChild(levelRow);
 
-            // blacklist characters
             const blRow = this.createEl('div', { style: 'display:flex;flex-direction:row;align-items:center;gap:8px;margin-bottom:8px;width:100%;' });
             const blLabel = this.createEl('label', { text: 'Blacklist characters:', style: 'min-width:160px;' });
             const blInput = this.createEl('input', { type: 'text', id: 'wBlacklistInput', value: this.getWBlacklist(), placeholder: '\\*, ~, etc', style: 'flex:1;' });
@@ -903,7 +790,6 @@
             blRow.appendChild(blLabel); blRow.appendChild(blInput); blRow.appendChild(blReset);
             panel.appendChild(blRow);
 
-            // lowercase checkbox
             const lcRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;' });
             const lcLabel = this.createEl('label', { text: 'Only lowercase (client-side):', style: 'min-width:160px;' });
             const lcInput = this.createEl('input', { type: 'checkbox', id: 'wLowercaseInput' });
@@ -911,7 +797,6 @@
             lcRow.appendChild(lcLabel); lcRow.appendChild(lcInput);
             panel.appendChild(lcRow);
 
-            // mood / style textarea
             const moodRow = this.createEl('div', { style: 'display:flex;flex-direction:column;gap:6px;margin-bottom:8px;width:100%;' });
             const moodLabel = this.createEl('label', { text: 'AI writing style / mood (optional):', style: 'min-width:160px;' });
             const moodInput = this.createEl('textarea', { id: 'wMoodInput', value: this.getWMood(), placeholder: 'e.g., Write concisely and politely, target an 11th-grade audience.' });
@@ -921,7 +806,6 @@
             moodRow.appendChild(moodLabel); moodRow.appendChild(moodInput); moodRow.appendChild(moodReset);
             panel.appendChild(moodRow);
 
-            // save listeners
             levelSelect.addEventListener('change', () => { this.saveSetting(this.settingsKeys.w_level, levelSelect.value); });
             blInput.addEventListener('change', () => { this.saveSetting(this.settingsKeys.w_blacklist, blInput.value || ''); });
             lcInput.addEventListener('change', () => { this.saveSetting(this.settingsKeys.w_lowercase, lcInput.checked ? 'true' : 'false'); });
@@ -932,7 +816,7 @@
 
         openAISettings() {
             const panel = document.getElementById('settingsPanel');
-            const expandRight = (this._lastAnchorAtOpen !== undefined) ? this._lastAnchorAtOpen : this._computeExpandRight();
+            const expandRight = this._computeExpandRight();
             this._setLauncherWidthAndAnchor(520, expandRight);
             this.settingsState = 'ai';
             if (!panel) return;
@@ -941,7 +825,6 @@
             const title = this.createEl('div', { className: 'ah-section-title', text: 'AI Settings' });
             panel.appendChild(title);
 
-            // method toggle
             const methodRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;' });
             const methodLabel = this.createEl('label', { text: 'Use direct API (toggle):', style: 'min-width:160px;' });
             const methodToggle = this.createEl('input', { type: 'checkbox', id: 'aiUseApiToggle' });
@@ -987,14 +870,15 @@
 
         backFromSettings() {
             const launcher = document.getElementById('Launcher');
+            const eye = document.getElementById('helperEye');
             const btn = document.getElementById('getAnswerButton');
             const settingsPanel = document.getElementById('settingsPanel');
             const settingsCog = document.getElementById('settingsCog');
             const settingsBack = document.getElementById('settingsBack');
 
             if (this.settingsState === 'mc' || this.settingsState === 'writing' || this.settingsState === 'ai') {
-                // shrink to menu view using the same anchor we used when opening to avoid twitch
-                const expandRight = (this._lastAnchorAtOpen !== undefined) ? this._lastAnchorAtOpen : this._computeExpandRight();
+                // shrink to menu view
+                const expandRight = this._computeExpandRight();
                 this._setLauncherWidthAndAnchor(360, expandRight);
                 this.settingsState = 'menu';
                 this.buildSettingsMenu();
@@ -1002,31 +886,19 @@
             }
 
             if (this.settingsState === 'menu') {
-                // hide panel with fade
-                if (settingsPanel) {
-                    settingsPanel.style.opacity = '0';
-                    setTimeout(() => { if (settingsPanel) { settingsPanel.style.display = 'none'; settingsPanel.innerHTML = ''; } }, 160);
-                }
-
-                // restore main button with fade
-                if (btn) {
-                    btn.style.display = 'flex';
-                    btn.style.opacity = '0';
-                    setTimeout(()=>{ btn.style.opacity = '1'; }, 10);
-                }
-
+                // hide panel
+                if (settingsPanel) { settingsPanel.style.display = 'none'; settingsPanel.innerHTML = ''; }
+                // restore main button
+                if (btn) { btn.style.display = 'flex'; setTimeout(()=>btn.style.opacity='1',10); }
                 // restore cog/back
                 if (settingsBack) { settingsBack.style.opacity = '0'; setTimeout(()=>settingsBack.style.display='none',120); }
                 if (settingsCog) settingsCog.style.display = 'block';
-
-                // shrink launcher back (use the anchor stored when opened to keep the pinned side stable)
-                const expandRight = (this._lastAnchorAtOpen !== undefined) ? this._lastAnchorAtOpen : this._computeExpandRight();
+                // shrink launcher back (decide anchor based on current rect — restore to default 180)
+                const expandRight = this._computeExpandRight();
                 this._setLauncherWidthAndAnchor(180, expandRight);
-
                 // restore eye full size & original placement
                 this._restoreEyeFromShrink();
                 this.settingsState = 'closed';
-                this._lastAnchorAtOpen = undefined;
                 return;
             }
         }
@@ -1052,51 +924,10 @@
                     .answerLauncher.show { opacity: 1; visibility: visible; transform: translateY(-50%) scale(1); }
                 `);
 
-                // Draggabilly (if available) for launcher — store instance and listen for dragEnd to save pos
                 if (typeof Draggabilly !== 'undefined') {
-                    try {
-                        // keep reference so we can destroy on close
-                        this._draggie = new Draggabilly(launcher, { handle: '.drag-handle', delay: 50 });
-                        try { this._draggie.on('dragEnd', () => { this._saveLauncherPositionFromRect(); }); } catch (e) {}
-                    } catch (e) { this._draggie = null; }
-                } else {
-                    // fallback manual drag for launcher (only active if Draggabilly not present)
-                    const dragHandle = launcher.querySelector('.drag-handle');
-                    if (dragHandle) {
-                        this._dragHandleMouseDown = (e) => {
-                            e.preventDefault();
-                            this._launcherManualDragging = true;
-                            const rect = launcher.getBoundingClientRect();
-                            this._launcherDragOffsetX = e.clientX - rect.left;
-                            this._launcherDragOffsetY = e.clientY - rect.top;
-                            // attach move/up handlers
-                            this._launcherMouseMove = (ev) => {
-                                if (!this._launcherManualDragging) return;
-                                const newLeft = ev.clientX - this._launcherDragOffsetX;
-                                const newTop = ev.clientY - this._launcherDragOffsetY;
-                                // keep anchored by left by default while dragging
-                                launcher.style.left = `${Math.max(0, newLeft)}px`;
-                                launcher.style.top = `${Math.max(0, newTop)}px`;
-                                launcher.style.right = 'auto';
-                                launcher.style.transform = 'translateY(0)';
-                            };
-                            this._launcherMouseUp = (ev) => {
-                                if (!this._launcherManualDragging) return;
-                                this._launcherManualDragging = false;
-                                // remove these handlers
-                                document.removeEventListener('mousemove', this._launcherMouseMove);
-                                document.removeEventListener('mouseup', this._launcherMouseUp);
-                                // save position
-                                this._saveLauncherPositionFromRect();
-                            };
-                            document.addEventListener('mousemove', this._launcherMouseMove);
-                            document.addEventListener('mouseup', this._launcherMouseUp);
-                        };
-                        dragHandle.addEventListener('mousedown', this._dragHandleMouseDown);
-                    }
+                    try { new Draggabilly(launcher, { handle: '.drag-handle', delay: 50 }); } catch (e) {}
                 }
 
-                // ANSWER bubble dragging — use named handlers so we can remove later
                 const answerDragHandle = answerContainer.querySelector('.answer-drag-handle');
                 if (answerDragHandle) {
                     answerDragHandle.addEventListener('mousedown', (e) => {
@@ -1109,8 +940,7 @@
                     });
                 }
 
-                // named handlers to remove later
-                this._answerMouseMove = (e) => {
+                document.addEventListener('mousemove', (e) => {
                     if (this.answerIsDragging && answerContainer) {
                         e.preventDefault();
                         const newX = e.clientX - this.answerInitialX;
@@ -1121,25 +951,26 @@
                         answerContainer.style.bottom = '';
                         answerContainer.style.transform = 'none';
                     }
-                };
-                this._answerMouseUp = () => { this.answerIsDragging = false; };
-                this._answerMouseLeave = () => { this.answerIsDragging = false; };
+                });
 
-                document.addEventListener('mousemove', this._answerMouseMove);
-                document.addEventListener('mouseup', this._answerMouseUp);
-                document.addEventListener('mouseleave', this._answerMouseLeave);
+                const stopDrag = () => (this.answerIsDragging = false);
+                document.addEventListener('mouseup', stopDrag);
+                document.addEventListener('mouseleave', stopDrag);
 
-                // close main launcher — now fully destroy the UI
                 if (closeButton) {
-                    closeButton.addEventListener('click', (ev) => {
-                        ev.preventDefault();
-                        this.destroy();
+                    closeButton.addEventListener('click', () => {
+                        launcher.style.opacity = 0;
+                        launcher.addEventListener('transitionend', function handler() {
+                            if (parseFloat(launcher.style.opacity) === 0) {
+                                launcher.style.visibility = 'hidden';
+                                launcher.removeEventListener('transitionend', handler);
+                            }
+                        }, { once: true });
                     });
                     closeButton.addEventListener('mousedown', () => (closeButton.style.transform = 'scale(0.95)'));
                     closeButton.addEventListener('mouseup', () => (closeButton.style.transform = 'scale(1)'));
                 }
 
-                // close answer bubble
                 if (closeAnswerButton) {
                     closeAnswerButton.addEventListener('click', () => {
                         answerContainer.style.opacity = 0;
@@ -1182,90 +1013,7 @@
                 if (settingsCog) settingsCog.addEventListener('click', (e) => { e.preventDefault(); this.openSettingsMenu(); });
                 if (settingsBack) settingsBack.addEventListener('click', (e) => { e.preventDefault(); this.backFromSettings(); });
 
-            } catch (e) {
-                console.error('[AssessmentHelper] setupEventListeners error', e);
-            }
-        }
-
-        // destroy: remove UI + listeners + draggie + clear active flag so re-injection possible
-        destroy() {
-            try {
-                // stop running process
-                this.stopProcessImmediate();
-
-                // remove draggie if exists
-                if (this._draggie && typeof this._draggie.destroy === 'function') {
-                    try { this._draggie.destroy(); } catch (e) {}
-                    this._draggie = null;
-                }
-
-                // remove fallback drag handle listener if attached
-                try {
-                    const launcher = document.getElementById('Launcher');
-                    if (launcher) {
-                        const dragHandle = launcher.querySelector('.drag-handle');
-                        if (dragHandle && this._dragHandleMouseDown) {
-                            try { dragHandle.removeEventListener('mousedown', this._dragHandleMouseDown); } catch (e) {}
-                            this._dragHandleMouseDown = null;
-                        }
-                    }
-                } catch (e) {}
-
-                // remove answer bubble handlers
-                if (this._answerMouseMove) {
-                    try { document.removeEventListener('mousemove', this._answerMouseMove); } catch (e) {}
-                    this._answerMouseMove = null;
-                }
-                if (this._answerMouseUp) {
-                    try { document.removeEventListener('mouseup', this._answerMouseUp); } catch (e) {}
-                    this._answerMouseUp = null;
-                }
-                if (this._answerMouseLeave) {
-                    try { document.removeEventListener('mouseleave', this._answerMouseLeave); } catch (e) {}
-                    this._answerMouseLeave = null;
-                }
-
-                // remove launcher manual move handlers if any left
-                if (this._launcherMouseMove) {
-                    try { document.removeEventListener('mousemove', this._launcherMouseMove); } catch (e) {}
-                    this._launcherMouseMove = null;
-                }
-                if (this._launcherMouseUp) {
-                    try { document.removeEventListener('mouseup', this._launcherMouseUp); } catch (e) {}
-                    this._launcherMouseUp = null;
-                }
-
-                // remove actual DOM elements
-                const uiRoot = this.itemMetadata && this.itemMetadata.UI ? this.itemMetadata.UI : null;
-                if (uiRoot && uiRoot.parentNode) {
-                    try { uiRoot.parentNode.removeChild(uiRoot); } catch (e) {}
-                } else {
-                    // fallback remove Launcher element
-                    const launcher = document.getElementById('Launcher');
-                    if (launcher && launcher.parentNode) {
-                        try { launcher.parentNode.removeChild(launcher); } catch (e) {}
-                    }
-                }
-                const answerUIRoot = this.itemMetadata && this.itemMetadata.answerUI ? this.itemMetadata.answerUI : null;
-                if (answerUIRoot && answerUIRoot.parentNode) {
-                    try { answerUIRoot.parentNode.removeChild(answerUIRoot); } catch (e) {}
-                } else {
-                    const answerContainer = document.getElementById('answerContainer');
-                    if (answerContainer && answerContainer.parentNode) {
-                        try { answerContainer.parentNode.removeChild(answerContainer); } catch (e) {}
-                    }
-                }
-
-                // clear marker allowing re-injection
-                try { window.__AssessmentHelperActive = false; } catch (e) {}
-
-                // remove references
-                this.itemMetadata = null;
-
-                console.log('[AssessmentHelper] destroyed');
-            } catch (err) {
-                console.error('[AssessmentHelper] destroy error', err);
-            }
+            } catch (e) {}
         }
 
         // -------- solver loop (uses settings & random MC) --------
@@ -1275,7 +1023,12 @@
                 try {
                     let queryContent = await this.fetchArticleContent();
 
-                    // --- NEW: Ready/Reflect special handling ---
+                    // Detect writing target: prefer TinyMCE iframe, then textarea, then contenteditable
+                    const tinyIframe = document.querySelector('.tox-edit-area__iframe');
+                    const plainTextarea = document.querySelector('textarea');
+                    const contentEditable = document.querySelector('[contenteditable="true"]');
+
+                    // --- READY / REFLECT special handling ---
                     try {
                         const href = (window.location && window.location.href) ? window.location.href : '';
                         if (href.includes('/lesson/ready') || href.includes('/lesson/reflect')) {
@@ -1289,7 +1042,7 @@
                                 readyQuestion = '';
                             }
 
-                            // If we didn't find text via that exact text() node, try more forgiving options:
+                            // fallback options if not found
                             if (!readyQuestion) {
                                 try {
                                     const altXpath = '//*[@id="before-reading-poll"]/div[1]/p[2]/div';
@@ -1297,8 +1050,6 @@
                                     if (node) readyQuestion = (node.textContent || '').trim();
                                 } catch (e) {}
                             }
-
-                            // If still empty, fall back to a simpler search:
                             if (!readyQuestion) {
                                 try {
                                     const fallbackNode = document.querySelector('#before-reading-poll p:nth-of-type(2) div') || document.querySelector('#before-reading-poll p div');
@@ -1306,10 +1057,6 @@
                                 } catch (e) {}
                             }
 
-                            // sanitize the readyQuestion to remove the dynamic toolbar boilerplate if present
-                            readyQuestion = this._sanitizeText(readyQuestion);
-
-                            // If we have a question, proceed:
                             if (readyQuestion) {
                                 try {
                                     console.groupCollapsed('[AssessmentHelper] Ready/Reflect detected — question fetched');
@@ -1328,12 +1075,12 @@
                                     disagreeNode = document.evaluate(disagreeXpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
                                 } catch (e) { disagreeNode = null; }
 
+                                // If radio buttons exist — decide and click but DO NOT submit
                                 if (agreeNode || disagreeNode) {
-                                    // Use AI to decide AGREE or DISAGREE
                                     const prompt = `${readyQuestion}\n\nDecide whether you AGREE or DISAGREE with this statement. Respond with exactly one word: AGREE or DISAGREE.`;
                                     try {
                                         console.groupCollapsed('[AssessmentHelper] Sent (Ready/Reflect classification) payload');
-                                        console.log('q:', this._sanitizeText(prompt));
+                                        console.log('q:', prompt);
                                         console.log('article:', this.cachedArticle || null);
                                         console.groupEnd();
                                     } catch (e) {}
@@ -1350,61 +1097,141 @@
                                     if (normalized.indexOf('AGREE') !== -1 && normalized.indexOf('DISAGREE') === -1) pickAgree = true;
                                     else if (normalized.indexOf('DISAGREE') !== -1 && normalized.indexOf('AGREE') === -1) pickAgree = false;
                                     else {
-                                        // If AI ambiguous, fallback to 'disagree' = safer default; but we'll pick based on first letter
                                         if (normalized.startsWith('A')) pickAgree = true;
                                         else if (normalized.startsWith('D')) pickAgree = false;
-                                        else pickAgree = true; // default to agree if unclear
+                                        else pickAgree = true;
                                     }
 
-                                    // Click the correct radio if available
+                                    // Click the radio for AGREE or DISAGREE (if available)
                                     try {
                                         if (pickAgree && agreeNode) {
                                             agreeNode.click();
-                                            try { console.log('[AssessmentHelper] Clicked: agree'); } catch (e) {}
+                                            console.log('[AssessmentHelper] Clicked: agree');
                                         } else if (!pickAgree && disagreeNode) {
                                             disagreeNode.click();
-                                            try { console.log('[AssessmentHelper] Clicked: disagree'); } catch (e) {}
+                                            console.log('[AssessmentHelper] Clicked: disagree');
                                         } else {
-                                            try { console.log('[AssessmentHelper] Radio target missing for chosen option.'); } catch (e) {}
+                                            console.log('[AssessmentHelper] Radio target missing for chosen option.');
                                         }
                                     } catch (e) {
-                                        try { console.log('[AssessmentHelper] Error clicking radio:', e && e.message); } catch (ee) {}
+                                        console.log('[AssessmentHelper] Error clicking radio:', e && e.message);
                                     }
 
-                                    // Attempt to submit or move forward same as MC flow
-                                    await new Promise(r => setTimeout(r, 400));
-                                    const submitButton = Array.from(document.querySelectorAll('button')).find((b) => b.textContent && b.textContent.trim() === 'Submit');
-                                    if (submitButton) {
-                                        submitButton.click();
-                                        await new Promise(r => setTimeout(r, 900));
-                                        const nextButton = document.getElementById('feedbackActivityFormBtn');
-                                        if (nextButton) {
-                                            nextButton.click();
-                                            // If next says Try again we might continue logic; mimic MC handling
-                                            await new Promise(r => setTimeout(r, 800));
-                                            const buttonText = nextButton.textContent ? nextButton.textContent.trim() : '';
-                                            if (buttonText === 'Try again') {
-                                                // If Try again, we attempt once more by recursion
-                                                return await attemptOnce([/* exclude none here for ready/reflect */]);
-                                            }
-                                        }
-                                    }
-
-                                    // Show result bubble
-                                    const answerContainerEl = document.getElementById('answerContainer');
-                                    const answerContentEl = answerContainerEl ? answerContainerEl.querySelector('#answerContent') : null;
-                                    if (answerContentEl) answerContentEl.textContent = normalized || classification;
-                                    if (answerContainerEl) { answerContainerEl.style.display = 'flex'; answerContainerEl.style.visibility = 'visible'; answerContainerEl.classList.add('show'); }
-
-                                    return false; // handled this attempt
-                                } else {
-                                    // No radios present — treat as writing target
-                                    // build writing prompt and behave like writing flow
-                                    let writingPrompt = `Please provide a detailed written answer based on the following question: ${readyQuestion}`;
+                                    // --- build justification prompt that uses the user's writing settings ---
                                     const level = this.getWLevel();
-                                    if (level) writingPrompt += ` Use English level ${level}.`;
                                     const minWords = this.getWMin();
                                     const maxWords = this.getWMax();
+                                    const mood = this.getWMood();
+
+                                    const starter = pickAgree ? 'I agree because' : 'I disagree because';
+                                    let justificationPrompt = `${readyQuestion}\n\n${starter} `;
+
+                                    // Add constraints
+                                    if (level) justificationPrompt += `Use English level ${level}. `;
+                                    if (minWords && maxWords) {
+                                        justificationPrompt += `Use a minimum of ${minWords} words and a maximum of ${maxWords} words. `;
+                                    } else if (minWords) {
+                                        justificationPrompt += `Use a minimum of ${minWords} words. `;
+                                    } else if (maxWords) {
+                                        justificationPrompt += `Use a maximum of ${maxWords} words. `;
+                                    }
+                                    if (mood) justificationPrompt += `${mood} `;
+
+                                    // Final instruction: produce a short justification paragraph starting with the starter
+                                    justificationPrompt += `Provide a concise justification starting with "${starter}" and keep it as one coherent paragraph. Respond only with the justification (no extra commentary).`;
+
+                                    try {
+                                        console.groupCollapsed('[AssessmentHelper] Sent (Ready/Reflect justification) payload');
+                                        console.log('q:', justificationPrompt);
+                                        console.groupEnd();
+                                    } catch (e) {}
+
+                                    const justificationText = await this.fetchAnswer(justificationPrompt);
+
+                                    // post-process — apply blacklist / lowercase
+                                    let processed = String(justificationText || '');
+                                    try {
+                                        const blacklist = this.getWBlacklist() || '';
+                                        if (blacklist && blacklist.length > 0) {
+                                            const escaped = blacklist.split('').map(ch => ch.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')).join('|');
+                                            if (escaped) {
+                                                const re = new RegExp(escaped, 'g');
+                                                processed = processed.replace(re, '');
+                                            }
+                                        }
+                                    } catch (e) {
+                                        try {
+                                            const blacklist = this.getWBlacklist() || '';
+                                            for (let i = 0; i < blacklist.length; i++) {
+                                                const ch = blacklist[i];
+                                                processed = processed.split(ch).join('');
+                                            }
+                                        } catch (e2) {}
+                                    }
+
+                                    if (this.getWLowercase()) processed = processed.toLowerCase();
+
+                                    // Insert the justification into TinyMCE iframe if present, else textarea/contenteditable
+                                    try {
+                                        const tinyIframeLocal = document.querySelector('.tox-edit-area__iframe');
+                                        const plainTextareaLocal = document.querySelector('textarea');
+                                        const contentEditableLocal = document.querySelector('[contenteditable="true"]');
+
+                                        if (tinyIframeLocal) {
+                                            const iframeDoc = tinyIframeLocal.contentDocument || tinyIframeLocal.contentWindow.document;
+                                            if (iframeDoc) {
+                                                iframeDoc.body.innerHTML = processed;
+                                                setTimeout(() => {
+                                                    iframeDoc.body.innerHTML += " ";
+                                                    const inputEvent = new Event('input', { bubbles: true });
+                                                    iframeDoc.body.dispatchEvent(inputEvent);
+                                                }, 300);
+                                            } else {
+                                                throw new Error('Unable to access iframe document');
+                                            }
+                                        } else if (plainTextareaLocal) {
+                                            plainTextareaLocal.value = processed;
+                                            plainTextareaLocal.dispatchEvent(new Event('input', { bubbles: true }));
+                                        } else if (contentEditableLocal) {
+                                            contentEditableLocal.innerHTML = processed;
+                                            contentEditableLocal.dispatchEvent(new Event('input', { bubbles: true }));
+                                        } else {
+                                            // fallback show in bubble
+                                            const answerContainerEl = document.getElementById('answerContainer');
+                                            const answerContentEl = answerContainerEl ? answerContainerEl.querySelector('#answerContent') : null;
+                                            if (answerContentEl) answerContentEl.textContent = processed;
+                                            if (answerContainerEl) { answerContainerEl.style.display = 'flex'; answerContainerEl.style.visibility = 'visible'; answerContainerEl.classList.add('show'); }
+                                        }
+
+                                        // NOTE: do NOT submit automatically; leave radio selected and justification typed.
+                                        // Stop processing (as user requested)
+                                        this._stoppedByWrite = true;
+                                        this.isRunning = false;
+                                        try { await this.stopProcessUI(); } catch (e) {}
+                                        return false;
+
+                                    } catch (e) {
+                                        // If insertion failed, show the processed text in the bubble
+                                        const answerContainerEl = document.getElementById('answerContainer');
+                                        const answerContentEl = answerContainerEl ? answerContainerEl.querySelector('#answerContent') : null;
+                                        if (answerContentEl) answerContentEl.textContent = processed;
+                                        if (answerContainerEl) { answerContainerEl.style.display = 'flex'; answerContainerEl.style.visibility = 'visible'; answerContainerEl.classList.add('show'); }
+
+                                        this._stoppedByWrite = true;
+                                        this.isRunning = false;
+                                        try { await this.stopProcessUI(); } catch (e2) {}
+                                        return false;
+                                    }
+                                } // end radios exist
+
+                                // else — no radios present, treat as writing target
+                                {
+                                    let writingPrompt = `Please provide a detailed written answer based on the following question: ${readyQuestion}`;
+                                    const level = this.getWLevel();
+                                    const minWords = this.getWMin();
+                                    const maxWords = this.getWMax();
+                                    const mood = this.getWMood();
+                                    if (level) writingPrompt += ` Use English level ${level}.`;
                                     if (minWords && maxWords) {
                                         writingPrompt += ` Use minimum ${minWords} words and maximum ${maxWords} words.`;
                                     } else if (minWords) {
@@ -1412,28 +1239,16 @@
                                     } else if (maxWords) {
                                         writingPrompt += ` Use maximum ${maxWords} words.`;
                                     }
-                                    const mood = this.getWMood();
                                     if (mood) writingPrompt += ` ${mood}`;
-
-                                    // sanitize prompt before sending (safety)
-                                    const sanitizedPrompt = this._sanitizeText(writingPrompt);
 
                                     try {
                                         console.groupCollapsed('[AssessmentHelper] Sent (Ready/Reflect writing) payload');
-                                        console.log('q:', sanitizedPrompt);
-                                        console.log('article:', this.cachedArticle || null);
+                                        console.log('q:', writingPrompt);
                                         console.groupEnd();
                                     } catch (e) {}
 
                                     const answerTextRaw = await this.fetchAnswer(writingPrompt);
 
-                                    try {
-                                        console.groupCollapsed('[AssessmentHelper] Received (Ready/Reflect writing) answer (raw)');
-                                        console.log(answerTextRaw);
-                                        console.groupEnd();
-                                    } catch (e) {}
-
-                                    // post-process similarly to writing flow
                                     let answerTextProcessed = String(answerTextRaw || '');
                                     try {
                                         const blacklist = this.getWBlacklist() || '';
@@ -1465,28 +1280,30 @@
                                     } catch (e) {}
 
                                     // Insert into editor/textarea/contentEditable
-                                    const tinyIframe = document.querySelector('.tox-edit-area__iframe');
-                                    const plainTextarea = document.querySelector('textarea');
-                                    const contentEditable = document.querySelector('[contenteditable="true"]');
                                     try {
-                                        if (tinyIframe) {
-                                            const iframeDoc = tinyIframe.contentDocument || tinyIframe.contentWindow.document;
+                                        const tinyIframeLocal = document.querySelector('.tox-edit-area__iframe');
+                                        const plainTextareaLocal = document.querySelector('textarea');
+                                        const contentEditableLocal = document.querySelector('[contenteditable="true"]');
+
+                                        if (tinyIframeLocal) {
+                                            const iframeDoc = tinyIframeLocal.contentDocument || tinyIframeLocal.contentWindow.document;
                                             if (iframeDoc) {
                                                 iframeDoc.body.innerHTML = answerTextProcessed;
                                                 setTimeout(() => {
                                                     iframeDoc.body.innerHTML += " ";
                                                     const inputEvent = new Event('input', { bubbles: true });
                                                     iframeDoc.body.dispatchEvent(inputEvent);
-                                                }, 500);
-                                            } else throw new Error('Unable to access iframe document');
-                                        } else if (plainTextarea) {
-                                            plainTextarea.value = answerTextProcessed;
-                                            plainTextarea.dispatchEvent(new Event('input', { bubbles: true }));
-                                        } else if (contentEditable) {
-                                            contentEditable.innerHTML = answerTextProcessed;
-                                            contentEditable.dispatchEvent(new Event('input', { bubbles: true }));
+                                                }, 300);
+                                            } else {
+                                                throw new Error('Unable to access iframe document');
+                                            }
+                                        } else if (plainTextareaLocal) {
+                                            plainTextareaLocal.value = answerTextProcessed;
+                                            plainTextareaLocal.dispatchEvent(new Event('input', { bubbles: true }));
+                                        } else if (contentEditableLocal) {
+                                            contentEditableLocal.innerHTML = answerTextProcessed;
+                                            contentEditableLocal.dispatchEvent(new Event('input', { bubbles: true }));
                                         } else {
-                                            // no target to paste into — show in bubble
                                             const answerContainerEl = document.getElementById('answerContainer');
                                             const answerContentEl = answerContainerEl ? answerContainerEl.querySelector('#answerContent') : null;
                                             if (answerContentEl) answerContentEl.textContent = answerTextProcessed;
@@ -1509,39 +1326,30 @@
                                         return false;
                                     }
                                 }
-                            } // end readyQuestion exists
-                        } // end URL contains ready/reflect
+                            } // end if readyQuestion exists
+                        } // end ready/reflect URL check
                     } catch (e) {
-                        // fail safe: if something goes wrong here just continue normal flow
                         console.warn('[AssessmentHelper] Ready/Reflect handler error', e && e.message);
                     }
 
-                    // Detect writing target (original logic) — prefer TinyMCE iframe, then textarea, then contenteditable
-                    const tinyIframe = document.querySelector('.tox-edit-area__iframe');
-                    const plainTextarea = document.querySelector('textarea');
-                    const contentEditable = document.querySelector('[contenteditable="true"]');
-
-                    const writingTarget = tinyIframe || plainTextarea || contentEditable || null;
-
-                    if (writingTarget) {
-                        // Writing flow (existing)
+                    // Normal writing detection (non-ready/reflect)
+                    if (tinyIframe || plainTextarea || contentEditable) {
                         let queryContentWriting = queryContent + "\n\nPlease provide a detailed written answer based on the above article and question.";
-
-                        // sanitize writing content to remove toolbar boilerplate if present
-                        queryContentWriting = this._sanitizeText(queryContentWriting);
+                        // append the user's writing settings
+                        const level = this.getWLevel();
+                        const minWords = this.getWMin();
+                        const maxWords = this.getWMax();
+                        const mood = this.getWMood();
+                        if (level) queryContentWriting += ` Use English level ${level}.`;
+                        if (minWords && maxWords) queryContentWriting += ` Use minimum ${minWords} words and maximum ${maxWords} words.`;
+                        else if (minWords) queryContentWriting += ` Use minimum ${minWords} words.`;
+                        else if (maxWords) queryContentWriting += ` Use maximum ${maxWords} words.`;
+                        if (mood) queryContentWriting += ` ${mood}`;
 
                         try {
                             console.groupCollapsed('[AssessmentHelper] Sent (writing) payload');
                             console.log('q:', queryContentWriting);
                             console.log('article:', this.cachedArticle || null);
-                            console.groupEnd();
-                        } catch (e) {}
-
-                        try {
-                            console.groupCollapsed('[AssessmentHelper] Writing target');
-                            if (tinyIframe) console.log('target: TinyMCE iframe', tinyIframe);
-                            else if (plainTextarea) console.log('target: textarea', plainTextarea);
-                            else if (contentEditable) console.log('target: contenteditable', contentEditable);
                             console.groupEnd();
                         } catch (e) {}
 
@@ -1555,11 +1363,34 @@
 
                         if (!this.isRunning) return false;
 
+                        // post-process client-side blacklist / lowercase
+                        let processed = String(answerText || '');
+                        try {
+                            const blacklist = this.getWBlacklist() || '';
+                            if (blacklist && blacklist.length > 0) {
+                                const escaped = blacklist.split('').map(ch => ch.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')).join('|');
+                                if (escaped) {
+                                    const re = new RegExp(escaped, 'g');
+                                    processed = processed.replace(re, '');
+                                }
+                            }
+                        } catch (e) {
+                            try {
+                                const blacklist = this.getWBlacklist() || '';
+                                for (let i = 0; i < blacklist.length; i++) {
+                                    const ch = blacklist[i];
+                                    processed = processed.split(ch).join('');
+                                }
+                            } catch (e2) {}
+                        }
+
+                        if (this.getWLowercase()) processed = processed.toLowerCase();
+
                         try {
                             if (tinyIframe) {
                                 const iframeDoc = tinyIframe.contentDocument || tinyIframe.contentWindow.document;
                                 if (iframeDoc) {
-                                    iframeDoc.body.innerHTML = answerText;
+                                    iframeDoc.body.innerHTML = processed;
                                     setTimeout(() => {
                                         iframeDoc.body.innerHTML += " ";
                                         const inputEvent = new Event('input', { bubbles: true });
@@ -1569,10 +1400,10 @@
                                     throw new Error('Unable to access iframe document');
                                 }
                             } else if (plainTextarea) {
-                                plainTextarea.value = answerText;
+                                plainTextarea.value = processed;
                                 plainTextarea.dispatchEvent(new Event('input', { bubbles: true }));
                             } else if (contentEditable) {
-                                contentEditable.innerHTML = answerText;
+                                contentEditable.innerHTML = processed;
                                 contentEditable.dispatchEvent(new Event('input', { bubbles: true }));
                             }
 
@@ -1584,7 +1415,7 @@
                         } catch (e) {
                             const answerContainerEl = document.getElementById('answerContainer');
                             const answerContentEl = answerContainerEl ? answerContainerEl.querySelector('#answerContent') : null;
-                            if (answerContentEl) answerContentEl.textContent = (typeof answerText === 'string' ? answerText : String(answerText));
+                            if (answerContentEl) answerContentEl.textContent = (typeof processed === 'string' ? processed : String(processed));
                             if (answerContainerEl) { answerContainerEl.style.display = 'flex'; answerContainerEl.style.visibility = 'visible'; answerContainerEl.classList.add('show'); }
                             this._stoppedByWrite = true;
                             this.isRunning = false;
@@ -1592,16 +1423,13 @@
                             return false;
                         }
                     } else {
-                        // Multiple choice mode (existing)
+                        // Multiple choice mode (unchanged)
                         queryContent += "\n\nPROVIDE ONLY A ONE-LETTER ANSWER THAT'S IT NOTHING ELSE (A, B, C, or D).";
                         if (excludedAnswers.length > 0) queryContent += `\n\nDo not pick letter ${excludedAnswers.join(', ')}.`;
 
-                        // sanitize MC content as well
-                        queryContent = this._sanitizeText(queryContent);
-
                         try {
                             console.groupCollapsed('[AssessmentHelper] Sent (MC) payload');
-                            console.log(queryContent);
+                            console.log('q:', queryContent);
                             console.log('article:', this.cachedArticle || null);
                             console.groupEnd();
                         } catch (e) {}
@@ -1738,5 +1566,5 @@
         }
     }
 
-    try { new AssessmentHelper(); } catch (e) { console.error('[AssessmentHelper] init error', e); window.__AssessmentHelperActive = false; }
+    try { new AssessmentHelper(); } catch (e) {}
 })();
