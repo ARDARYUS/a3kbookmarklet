@@ -1,4 +1,4 @@
-// AssessmentHelper — adds destroy() to fully remove UI and cleanup listeners
+// Full AssessmentHelper with AI Settings + Groq chat-completion support
 (function () {
     try { console.clear(); } catch (e) {}
     console.log('[AssessmentHelper] injected');
@@ -27,28 +27,34 @@
             this.animeScriptUrl = 'https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js';
             this.draggabillyScriptUrl = 'https://unpkg.com/draggabilly@3/dist/draggabilly.pkgd.min.js';
 
+            // cloudflare URL (default "url method")
             this.askEndpoint = 'https://f-ghost-insights-pressed.trycloudflare.com/ask';
+            this.dataEndpoint = 'https://f-ghost-insights-pressed.trycloudflare.com/data';
+
             this.assetBase = 'https://raw.githubusercontent.com/ARDARYUS/a3kbookmarklet/main/icons/';
 
             // Settings keys & defaults
             this.settingsKeys = {
                 mc_wait: 'ah_mc_wait_ms',
-                mc_random_pct: 'ah_mc_random_pct'
+                mc_random_pct: 'ah_mc_random_pct',
+                ai_use_api: 'ah_ai_use_api',
+                ai_groq_url: 'ah_ai_groq_url',
+                ai_groq_key: 'ah_ai_groq_key',
+                ai_groq_model: 'ah_ai_groq_model'
             };
             this.defaults = {
                 mc_wait: 300,
-                mc_random_pct: 0
+                mc_random_pct: 0,
+                ai_groq_model: 'llama-3.1-8b-instant',
+                // default storage for groq url if user chooses API - empty by default
+                ai_groq_url: ''
             };
 
-            // UI state for settings: 'closed' | 'menu' | 'mc' | 'writing'
+            // UI state for settings: 'closed' | 'menu' | 'mc' | 'writing' | 'ai'
             this.settingsState = 'closed';
 
             // store original eye style so we can restore after settings
             this._eyeOriginal = null;
-
-            // references for cleanup
-            this._draggie = null;
-            this._boundHandlers = {};
 
             if (document.readyState === 'loading') {
                 document.addEventListener('DOMContentLoaded', () => this.init());
@@ -65,14 +71,36 @@
             try {
                 const v = localStorage.getItem(key);
                 if (v === null || v === undefined) return fallback;
+                // boolean stored as "true"/"false" handled by caller
+                return v;
+            } catch (e) { return fallback; }
+        }
+        loadNumberSetting(key, fallback) {
+            try {
+                const v = localStorage.getItem(key);
+                if (v === null || v === undefined) return fallback;
                 const n = Number(v);
                 return Number.isFinite(n) ? n : fallback;
             } catch (e) { return fallback; }
         }
-        getMCWait() { return this.loadSetting(this.settingsKeys.mc_wait, this.defaults.mc_wait); }
-        getMCRandomPct() { return this.loadSetting(this.settingsKeys.mc_random_pct, this.defaults.mc_random_pct); }
+
+        getMCWait() { return this.loadNumberSetting(this.settingsKeys.mc_wait, this.defaults.mc_wait); }
+        getMCRandomPct() { return this.loadNumberSetting(this.settingsKeys.mc_random_pct, this.defaults.mc_random_pct); }
         resetMCWait() { this.saveSetting(this.settingsKeys.mc_wait, this.defaults.mc_wait); }
         resetMCRandom() { this.saveSetting(this.settingsKeys.mc_random_pct, this.defaults.mc_random_pct); }
+
+        // AI settings helpers
+        setUseGroqApi(b) { this.saveSetting(this.settingsKeys.ai_use_api, b ? 'true' : 'false'); }
+        getUseGroqApi() {
+            const v = this.loadSetting(this.settingsKeys.ai_use_api, 'false');
+            return String(v) === 'true';
+        }
+        setGroqUrl(u) { try { this.saveSetting(this.settingsKeys.ai_groq_url, u || ''); } catch (e) {} }
+        getGroqUrl() { return this.loadSetting(this.settingsKeys.ai_groq_url, this.defaults.ai_groq_url) || ''; }
+        setGroqKey(k) { try { this.saveSetting(this.settingsKeys.ai_groq_key, k || ''); } catch (e) {} }
+        getGroqKey() { return this.loadSetting(this.settingsKeys.ai_groq_key, '') || ''; }
+        setGroqModel(m) { try { this.saveSetting(this.settingsKeys.ai_groq_model, m || this.defaults.ai_groq_model); } catch (e) {} }
+        getGroqModel() { return this.loadSetting(this.settingsKeys.ai_groq_model, this.defaults.ai_groq_model) || this.defaults.ai_groq_model; }
 
         // -------- resources & element helpers --------
         getUrl(path) {
@@ -185,7 +213,7 @@
                 style: 'position:absolute;top:8px;right:8px;background:none;border:none;color:white;font-size:18px;cursor:pointer;padding:2px 8px;transition:color 0.12s ease, transform 0.1s ease;opacity:0.5;z-index:100005;'
             });
 
-            // Main action button: style like settings buttons (colors) with hover later
+            // Main action button
             const getAnswerButton = this.createEl('button', {
                 id: 'getAnswerButton',
                 style:
@@ -202,7 +230,6 @@
             getAnswerButton.appendChild(spinner);
             getAnswerButton.appendChild(buttonTextSpan);
 
-            // Version remains visible always
             const version = this.createEl('div', { id: 'ah-version', style: 'position:absolute;bottom:8px;right:8px;font-size:12px;opacity:0.9;z-index:100005', text: '1.0' });
 
             // SETTINGS COG (bottom-left)
@@ -244,6 +271,7 @@
                 #getAnswerButton.running { background: #1e1e1e; box-shadow: 0 4px 12px rgba(0,0,0,0.35); }
                 #getAnswerButton.running span { font-size:12px; opacity:0.95; }
                 #settingsPanel input[type="number"] { width:80px; padding:4px; border-radius:6px; border:1px solid rgba(255,255,255,0.08); background:transparent; color:white; }
+                #settingsPanel input[type="text"], #settingsPanel input[type="password"] { width:220px; padding:6px; border-radius:6px; border:1px solid rgba(255,255,255,0.08); background:transparent; color:white; }
                 #settingsPanel label { font-size:13px; margin-right:6px; }
                 .ah-reset { cursor:pointer; margin-left:8px; opacity:0.8; font-size:14px; user-select:none; }
                 .ah-section-title { font-weight:700; margin-top:4px; margin-bottom:6px; font-size:14px; }
@@ -356,15 +384,114 @@
             }
         }
 
+        // Unified fetchAnswer: either URL method (cloudflare) or Groq chat-completion API
         async fetchAnswer(queryContent, retryCount = 0) {
             const MAX_RETRIES = 3, RETRY_DELAY_MS = 1000;
             try {
+                // abort previous
                 if (this.currentAbortController) {
                     try { this.currentAbortController.abort(); } catch (e) {}
                 }
                 this.currentAbortController = new AbortController();
                 const signal = this.currentAbortController.signal;
 
+                // If user chose API method, use Groq chat-completion style
+                if (this.getUseGroqApi()) {
+                    const groqUrl = this.getGroqUrl();
+                    const groqKey = this.getGroqKey();
+                    const groqModel = this.getGroqModel() || this.defaults.ai_groq_model;
+
+                    if (!groqUrl || !groqKey) {
+                        this.currentAbortController = null;
+                        return 'Error: Groq API URL or Key not configured.';
+                    }
+
+                    const body = {
+                        model: groqModel,
+                        messages: [
+                            { role: 'user', content: queryContent }
+                        ],
+                        max_tokens: 1024,
+                        temperature: 0.0
+                    };
+
+                    const response = await fetch(groqUrl, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${groqKey}`
+                        },
+                        body: JSON.stringify(body),
+                        signal
+                    });
+
+                    this.currentAbortController = null;
+
+                    if (!response.ok) {
+                        const text = await response.text().catch(() => '');
+                        if (response.status === 500 && text.includes("429 You exceeded your current quota") && retryCount < MAX_RETRIES) {
+                            await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
+                            return this.fetchAnswer(queryContent, retryCount + 1);
+                        }
+                        throw new Error(`API error ${response.status}: ${text}`);
+                    }
+
+                    const data = await response.json().catch(() => null);
+
+                    // Attempt to extract text from common response shapes:
+                    let text = null;
+                    if (data && typeof data === 'object') {
+                        if (data.output_text && typeof data.output_text === 'string') text = data.output_text;
+                        else if (typeof data.output === 'string') text = data.output;
+                        else if (data.response && typeof data.response === 'string') text = data.response;
+                        else if (data.answer && typeof data.answer === 'string') text = data.answer;
+                    }
+
+                    if (!text && data && Array.isArray(data.choices) && data.choices.length > 0) {
+                        const c0 = data.choices[0];
+                        if (c0.message && (c0.message.content || c0.message.content_text)) {
+                            if (typeof c0.message.content === 'string') text = c0.message.content;
+                            else if (Array.isArray(c0.message.content)) {
+                                text = c0.message.content.map(p => (p.text || p.content || '')).join('');
+                            } else if (typeof c0.message.content_text === 'string') {
+                                text = c0.message.content_text;
+                            }
+                        } else if (c0.text) {
+                            text = c0.text;
+                        } else if (c0.output && typeof c0.output === 'string') {
+                            text = c0.output;
+                        }
+                    }
+
+                    if (!text && data && Array.isArray(data.output)) {
+                        try {
+                            text = data.output.map(item => {
+                                if (!item) return '';
+                                if (typeof item === 'string') return item;
+                                if (item.content && typeof item.content === 'string') return item.content;
+                                if (item.content && Array.isArray(item.content)) {
+                                    return item.content.map(c => (c.text || c.content || '')).join('');
+                                }
+                                return '';
+                            }).join('\n');
+                            if (text === '') text = null;
+                        } catch (e) { text = null; }
+                    }
+
+                    if (!text && data && typeof data === 'string') text = data;
+
+                    if (!text) {
+                        try {
+                            text = data ? JSON.stringify(data) : 'No answer available';
+                        } catch (e) {
+                            text = 'No answer available';
+                        }
+                    }
+
+                    return String(text).trim();
+                }
+
+                // Otherwise: URL method (cloudflare / original endpoint)
                 const response = await fetch(this.askEndpoint, {
                     method: 'POST',
                     cache: 'no-cache',
@@ -384,8 +511,7 @@
                     throw new Error(`API error ${response.status}: ${text}`);
                 }
                 const data = await response.json().catch(() => null);
-                if (data && (data.response || data.answer)) return String(data.response || data.answer).trim();
-                return 'No answer available';
+                return data && (data.response || data.answer) ? String(data.response || data.answer).trim() : 'No answer available';
             } catch (err) {
                 if (err && err.name === 'AbortError') return '<<ABORTED>>';
                 return `Error: ${err && err.message ? err.message : String(err)}`;
@@ -549,12 +675,11 @@
             const launcher = document.getElementById('Launcher');
             if (!launcher) return;
             const rect = launcher.getBoundingClientRect();
-            // Temporarily disable transition to avoid jumps
-            const prevTransition = launcher.style.transition;
-            launcher.style.transition = 'none';
             if (expandRight) {
                 // Fix left and expand to the right
-                launcher.style.left = `${rect.left}px`;
+                if (!launcher.style.left || launcher.style.left === '') {
+                    launcher.style.left = `${rect.left}px`;
+                }
                 launcher.style.right = 'auto';
                 launcher.style.width = `${widthPx}px`;
             } else {
@@ -564,22 +689,17 @@
                 launcher.style.left = 'auto';
                 launcher.style.width = `${widthPx}px`;
             }
-            // force reflow then restore transition
-            void launcher.offsetWidth;
-            launcher.style.transition = prevTransition || 'opacity 0.25s ease,width 0.25s ease,font-size .12s ease';
         }
 
         _shrinkEyeToTopRight() {
             const eye = document.getElementById('helperEye');
             if (!eye) return;
-            // Save original once
             if (!this._eyeOriginal) {
                 this._eyeOriginal = {
                     style: eye.getAttribute('style') || '',
                     parentDisplay: eye.style.display || ''
                 };
             }
-            // Shrink and move under the X, inside the launcher
             eye.style.display = 'flex';
             eye.style.position = 'absolute';
             eye.style.top = '12px';
@@ -588,7 +708,6 @@
             eye.style.height = '48px';
             eye.style.marginTop = '0';
             eye.style.zIndex = '100004';
-            // also shrink internal img
             const img = document.getElementById('helperEyeImg');
             if (img) img.style.width = '100%';
         }
@@ -597,11 +716,9 @@
             const eye = document.getElementById('helperEye');
             if (!eye) return;
             if (this._eyeOriginal) {
-                // restore style string (safe)
                 eye.setAttribute('style', this._eyeOriginal.style);
                 this._eyeOriginal = null;
             } else {
-                // fallback restore approximate layout
                 eye.style.position = '';
                 eye.style.top = '';
                 eye.style.right = '';
@@ -634,33 +751,36 @@
                 style: 'padding:10px 12px;border-radius:8px;background:#151515;border:1px solid rgba(255,255,255,0.04);color:white;cursor:pointer;'
             });
 
+            const aiBtn = this.createEl('button', {
+                id: 'aiSettingsBtn',
+                text: 'AI Settings',
+                style: 'padding:10px 12px;border-radius:8px;background:#151515;border:1px solid rgba(255,255,255,0.04);color:white;cursor:pointer;'
+            });
+
             panel.appendChild(mcBtn);
             panel.appendChild(wrBtn);
+            panel.appendChild(aiBtn);
 
             mcBtn.addEventListener('click', (e) => { e.preventDefault(); this.openMCSettings(); });
             wrBtn.addEventListener('click', (e) => { e.preventDefault(); this.openWritingSettings(); });
+            aiBtn.addEventListener('click', (e) => { e.preventDefault(); this.openAISettings(); });
         }
 
         openSettingsMenu() {
             const launcher = document.getElementById('Launcher');
             if (!launcher) return;
-            const eye = document.getElementById('helperEye');
             const btn = document.getElementById('getAnswerButton');
 
-            // compute direction and set width to menu-size
             const expandRight = this._computeExpandRight();
             this._setLauncherWidthAndAnchor(360, expandRight);
 
-            // shrink eye but keep visible at top-right
             this._shrinkEyeToTopRight();
 
-            // fade out main items except version & close & cog/back
             if (btn) { btn.style.transition = 'opacity 0.12s'; btn.style.opacity = '0'; setTimeout(()=>btn.style.display='none',140); }
 
             const panel = document.getElementById('settingsPanel');
             if (panel) { panel.style.display = 'flex'; panel.style.opacity = '1'; }
 
-            // replace cog with back arrow
             const settingsCog = document.getElementById('settingsCog');
             const settingsBack = document.getElementById('settingsBack');
             if (settingsCog) settingsCog.style.display = 'none';
@@ -726,6 +846,95 @@
             panel.appendChild(placeholder);
         }
 
+        openAISettings() {
+            const panel = document.getElementById('settingsPanel');
+            const expandRight = this._computeExpandRight();
+            this._setLauncherWidthAndAnchor(520, expandRight);
+            this.settingsState = 'ai';
+            if (!panel) return;
+            panel.innerHTML = '';
+
+            const title = this.createEl('div', { className: 'ah-section-title', text: 'AI Settings' });
+            panel.appendChild(title);
+
+            // Show the default fixed URL (cloudflare) and the toggle
+            const defaultUrlRow = this.createEl('div', { style: 'display:flex;flex-direction:column;gap:6px;margin-bottom:8px;' });
+            const defaultLabel = this.createEl('label', { text: 'Default (URL method) endpoint (fixed):', style: 'font-size:12px;opacity:0.85;' });
+            const defaultUrlDisplay = this.createEl('div', { text: this.askEndpoint, style: 'font-size:12px;opacity:0.9;padding:6px;border-radius:6px;border:1px solid rgba(255,255,255,0.04);background:transparent;word-break:break-all;' });
+            defaultUrlRow.appendChild(defaultLabel);
+            defaultUrlRow.appendChild(defaultUrlDisplay);
+            panel.appendChild(defaultUrlRow);
+
+            // Toggle to use API method instead of URL method
+            const toggleRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;' });
+            const toggleLabel = this.createEl('label', { text: 'Use API method (Groq/chat-completion):', style: 'min-width:200px;' });
+            const toggleInput = this.createEl('input', { type: 'checkbox', id: 'aiUseApiCheckbox' });
+            const toggleHint = this.createEl('span', { text: '(if OFF, URL method used)', style: 'font-size:12px;opacity:0.8;' });
+
+            // set checkbox from storage
+            toggleInput.checked = !!this.getUseGroqApi();
+            toggleInput.addEventListener('change', () => {
+                this.setUseGroqApi(toggleInput.checked);
+                // rebuild to show/hide API fields
+                this.openAISettings();
+            });
+
+            toggleRow.appendChild(toggleLabel); toggleRow.appendChild(toggleInput); toggleRow.appendChild(toggleHint);
+            panel.appendChild(toggleRow);
+
+            // API config area (shown only if toggleInput.checked)
+            const apiArea = this.createEl('div', { id: 'aiApiArea', style: toggleInput.checked ? 'display:flex;flex-direction:column;gap:8px;' : 'display:none;' });
+
+            // API URL field
+            const apiUrlRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;' });
+            const apiUrlLabel = this.createEl('label', { text: 'API URL (Groq endpoint):', style: 'min-width:140px;' });
+            const apiUrlInput = this.createEl('input', { type: 'text', id: 'aiGroqUrlInput', value: this.getGroqUrl() || '', placeholder: 'https://api.groq.cloud/v1/...' });
+            const apiUrlReset = this.createEl('span', { className: 'ah-reset', text: '↺', title: 'Clear' });
+            apiUrlReset.addEventListener('click', () => { apiUrlInput.value = ''; this.setGroqUrl(''); });
+
+            apiUrlRow.appendChild(apiUrlLabel); apiUrlRow.appendChild(apiUrlInput); apiUrlRow.appendChild(apiUrlReset);
+            apiArea.appendChild(apiUrlRow);
+
+            // API Key field (stored locally)
+            const apiKeyRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;' });
+            const apiKeyLabel = this.createEl('label', { text: 'API Key:', style: 'min-width:140px;' });
+            const apiKeyInput = this.createEl('input', { type: 'password', id: 'aiGroqKeyInput', value: this.getGroqKey() || '', placeholder: 'paste API key (stored locally)' });
+            const apiKeyReset = this.createEl('span', { className: 'ah-reset', text: '↺', title: 'Clear' });
+            apiKeyReset.addEventListener('click', () => { apiKeyInput.value = ''; this.setGroqKey(''); });
+
+            apiKeyRow.appendChild(apiKeyLabel); apiKeyRow.appendChild(apiKeyInput); apiKeyRow.appendChild(apiKeyReset);
+            apiArea.appendChild(apiKeyRow);
+
+            // Model selection (default 'llama-3.1-8b-instant')
+            const modelRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;' });
+            const modelLabel = this.createEl('label', { text: 'Model:', style: 'min-width:140px;' });
+            const modelInput = this.createEl('input', { type: 'text', id: 'aiGroqModelInput', value: this.getGroqModel() || this.defaults.ai_groq_model });
+            const modelReset = this.createEl('span', { className: 'ah-reset', text: '↺', title: 'Reset to default' });
+            modelReset.addEventListener('click', () => { modelInput.value = this.defaults.ai_groq_model; this.setGroqModel(this.defaults.ai_groq_model); });
+
+            modelRow.appendChild(modelLabel); modelRow.appendChild(modelInput); modelRow.appendChild(modelReset);
+            apiArea.appendChild(modelRow);
+
+            // Save button for API settings
+            const apiSaveRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-top:8px;' });
+            const apiSaveBtn = this.createEl('button', { text: 'Save AI settings', style: 'padding:8px 10px;border-radius:8px;background:#151515;border:1px solid rgba(255,255,255,0.04);color:white;cursor:pointer;' });
+            apiSaveBtn.addEventListener('click', () => {
+                const urlVal = (apiUrlInput.value || '').trim();
+                const keyVal = (apiKeyInput.value || '').trim();
+                const modelVal = (modelInput.value || '').trim() || this.defaults.ai_groq_model;
+                this.setGroqUrl(urlVal);
+                this.setGroqKey(keyVal);
+                this.setGroqModel(modelVal);
+                // persist toggle state already saved; give feedback
+                this.showAlert('AI settings saved (locally).');
+            });
+
+            apiSaveRow.appendChild(apiSaveBtn);
+            apiArea.appendChild(apiSaveRow);
+
+            panel.appendChild(apiArea);
+        }
+
         backFromSettings() {
             const launcher = document.getElementById('Launcher');
             const eye = document.getElementById('helperEye');
@@ -734,7 +943,7 @@
             const settingsCog = document.getElementById('settingsCog');
             const settingsBack = document.getElementById('settingsBack');
 
-            if (this.settingsState === 'mc' || this.settingsState === 'writing') {
+            if (this.settingsState === 'mc' || this.settingsState === 'writing' || this.settingsState === 'ai') {
                 // shrink to menu view
                 const expandRight = this._computeExpandRight();
                 this._setLauncherWidthAndAnchor(360, expandRight);
@@ -751,10 +960,8 @@
                 // restore cog/back
                 if (settingsBack) { settingsBack.style.opacity = '0'; setTimeout(()=>settingsBack.style.display='none',120); }
                 if (settingsCog) settingsCog.style.display = 'block';
-                // shrink launcher back (decide anchor based on current rect — restore to default 180)
                 const expandRight = this._computeExpandRight();
                 this._setLauncherWidthAndAnchor(180, expandRight);
-                // restore eye full size & original placement
                 this._restoreEyeFromShrink();
                 this.settingsState = 'closed';
                 return;
@@ -782,30 +989,23 @@
                     .answerLauncher.show { opacity: 1; visibility: visible; transform: translateY(-50%) scale(1); }
                 `);
 
-                // Draggabilly (silent fail)
                 if (typeof Draggabilly !== 'undefined') {
-                    try {
-                        this._draggie = new Draggabilly(launcher, { handle: '.drag-handle', delay: 50 });
-                    } catch (e) { this._draggie = null; }
-                } else {
-                    this._draggie = null;
+                    try { new Draggabilly(launcher, { handle: '.drag-handle', delay: 50 }); } catch (e) {}
                 }
 
-                // create named handlers so we can remove them in destroy()
-                // answer drag handle mousedown
                 const answerDragHandle = answerContainer.querySelector('.answer-drag-handle');
-                this._boundHandlers.answerHandleDown = (e) => {
-                    e.preventDefault();
-                    this.answerIsDragging = true;
-                    const rect = answerContainer.getBoundingClientRect();
-                    this.answerInitialX = e.clientX - rect.left;
-                    this.answerInitialY = e.clientY - rect.top;
-                    answerContainer.style.position = 'fixed';
-                };
-                if (answerDragHandle) answerDragHandle.addEventListener('mousedown', this._boundHandlers.answerHandleDown);
+                if (answerDragHandle) {
+                    answerDragHandle.addEventListener('mousedown', (e) => {
+                        e.preventDefault();
+                        this.answerIsDragging = true;
+                        const rect = answerContainer.getBoundingClientRect();
+                        this.answerInitialX = e.clientX - rect.left;
+                        this.answerInitialY = e.clientY - rect.top;
+                        answerContainer.style.position = 'fixed';
+                    });
+                }
 
-                // document mousemove for dragging answer
-                this._boundHandlers.documentMouseMove = (e) => {
+                document.addEventListener('mousemove', (e) => {
                     if (this.answerIsDragging && answerContainer) {
                         e.preventDefault();
                         const newX = e.clientX - this.answerInitialX;
@@ -816,30 +1016,28 @@
                         answerContainer.style.bottom = '';
                         answerContainer.style.transform = 'none';
                     }
-                };
-                document.addEventListener('mousemove', this._boundHandlers.documentMouseMove);
+                });
 
-                this._boundHandlers.documentMouseUp = () => { this.answerIsDragging = false; };
-                this._boundHandlers.documentMouseLeave = () => { this.answerIsDragging = false; };
-                document.addEventListener('mouseup', this._boundHandlers.documentMouseUp);
-                document.addEventListener('mouseleave', this._boundHandlers.documentMouseLeave);
+                const stopDrag = () => (this.answerIsDragging = false);
+                document.addEventListener('mouseup', stopDrag);
+                document.addEventListener('mouseleave', stopDrag);
 
-                // close main launcher
-                this._boundHandlers.closeButtonClick = () => {
-                    // call destroy to fully clean up
-                    try { this.destroy(); } catch (e) {}
-                };
                 if (closeButton) {
-                    closeButton.addEventListener('click', this._boundHandlers.closeButtonClick);
-                    this._boundHandlers.closeButtonDown = () => (closeButton.style.transform = 'scale(0.95)');
-                    this._boundHandlers.closeButtonUp = () => (closeButton.style.transform = 'scale(1)');
-                    closeButton.addEventListener('mousedown', this._boundHandlers.closeButtonDown);
-                    closeButton.addEventListener('mouseup', this._boundHandlers.closeButtonUp);
+                    closeButton.addEventListener('click', () => {
+                        launcher.style.opacity = 0;
+                        launcher.addEventListener('transitionend', function handler() {
+                            if (parseFloat(launcher.style.opacity) === 0) {
+                                launcher.style.visibility = 'hidden';
+                                launcher.removeEventListener('transitionend', handler);
+                            }
+                        }, { once: true });
+                    });
+                    closeButton.addEventListener('mousedown', () => (closeButton.style.transform = 'scale(0.95)'));
+                    closeButton.addEventListener('mouseup', () => (closeButton.style.transform = 'scale(1)'));
                 }
 
-                // close answer bubble
                 if (closeAnswerButton) {
-                    this._boundHandlers.closeAnswerClick = () => {
+                    closeAnswerButton.addEventListener('click', () => {
                         answerContainer.style.opacity = 0;
                         answerContainer.style.transform = 'translateY(-50%) scale(0.8)';
                         answerContainer.addEventListener('transitionend', function handler() {
@@ -850,22 +1048,18 @@
                                 answerContainer.removeEventListener('transitionend', handler);
                             }
                         }, { once: true });
-                    };
-                    this._boundHandlers.closeAnswerDown = () => (closeAnswerButton.style.transform = 'scale(0.95)');
-                    this._boundHandlers.closeAnswerUp = () => (closeAnswerButton.style.transform = 'scale(1)');
-
-                    closeAnswerButton.addEventListener('click', this._boundHandlers.closeAnswerClick);
-                    closeAnswerButton.addEventListener('mousedown', this._boundHandlers.closeAnswerDown);
-                    closeAnswerButton.addEventListener('mouseup', this._boundHandlers.closeAnswerUp);
+                    });
+                    closeAnswerButton.addEventListener('mousedown', () => (closeAnswerButton.style.transform = 'scale(0.95)'));
+                    closeAnswerButton.addEventListener('mouseup', () => (closeAnswerButton.style.transform = 'scale(1)'));
                 }
 
-                // getAnswerButton interactions & eye behavior (click sets full)
-                this._boundHandlers.getBtnEnter = async () => { try { await this.handleHoverEnter(); } catch (e) {} getAnswerButton.style.background = '#1f1f1f'; };
-                this._boundHandlers.getBtnLeave = async () => { try { await this.handleHoverLeave(); } catch (e) {} getAnswerButton.style.background = '#151515'; };
-                this._boundHandlers.getBtnDown = () => (getAnswerButton.style.transform = 'scale(0.98)');
-                this._boundHandlers.getBtnUp = () => (getAnswerButton.style.transform = 'scale(1)');
+                getAnswerButton.addEventListener('mouseenter', async () => { try { await this.handleHoverEnter(); } catch (e) {} getAnswerButton.style.background = '#1f1f1f'; });
+                getAnswerButton.addEventListener('mouseleave', async () => { try { await this.handleHoverLeave(); } catch (e) {} getAnswerButton.style.background = '#151515'; });
+                getAnswerButton.addEventListener('mousedown', () => (getAnswerButton.style.transform = 'scale(0.98)'));
+                getAnswerButton.addEventListener('mouseup', () => (getAnswerButton.style.transform = 'scale(1)'));
 
-                this._boundHandlers.getBtnClick = async () => {
+                // Toggle start/stop
+                getAnswerButton.addEventListener('click', async () => {
                     if (!this.isRunning) {
                         this.isRunning = true;
                         this._stoppedByWrite = false;
@@ -876,22 +1070,13 @@
                         this.stopProcessImmediate();
                         await this.stopProcessUI();
                     }
-                };
-
-                getAnswerButton.addEventListener('mouseenter', this._boundHandlers.getBtnEnter);
-                getAnswerButton.addEventListener('mouseleave', this._boundHandlers.getBtnLeave);
-                getAnswerButton.addEventListener('mousedown', this._boundHandlers.getBtnDown);
-                getAnswerButton.addEventListener('mouseup', this._boundHandlers.getBtnUp);
-                getAnswerButton.addEventListener('click', this._boundHandlers.getBtnClick);
+                });
 
                 // Settings cog/back wiring
                 const settingsCog = document.getElementById('settingsCog');
                 const settingsBack = document.getElementById('settingsBack');
-                this._boundHandlers.openSettings = (e) => { e.preventDefault(); this.openSettingsMenu(); };
-                this._boundHandlers.backSettings = (e) => { e.preventDefault(); this.backFromSettings(); };
-
-                if (settingsCog) settingsCog.addEventListener('click', this._boundHandlers.openSettings);
-                if (settingsBack) settingsBack.addEventListener('click', this._boundHandlers.backSettings);
+                if (settingsCog) settingsCog.addEventListener('click', (e) => { e.preventDefault(); this.openSettingsMenu(); });
+                if (settingsBack) settingsBack.addEventListener('click', (e) => { e.preventDefault(); this.backFromSettings(); });
 
             } catch (e) {}
         }
@@ -905,9 +1090,8 @@
 
                     // Detect writing target: prefer TinyMCE iframe, then textarea, then contenteditable
                     const tinyIframe = document.querySelector('.tox-edit-area__iframe');
-                    // prefer visible textarea
-                    const plainTextarea = Array.from(document.querySelectorAll('textarea')).find(t => t.offsetParent !== null);
-                    const contentEditable = Array.from(document.querySelectorAll('[contenteditable="true"]')).find(e => e.offsetParent !== null);
+                    const plainTextarea = document.querySelector('textarea');
+                    const contentEditable = document.querySelector('[contenteditable="true"]');
 
                     const writingTarget = tinyIframe || plainTextarea || contentEditable || null;
 
@@ -916,8 +1100,8 @@
 
                         try {
                             console.groupCollapsed('[AssessmentHelper] Sent (writing) payload');
-                            // Log object so console expands full strings
-                            console.log({ q: queryContent, article: this.cachedArticle || null });
+                            console.log('q:', queryContent);
+                            console.log('article:', this.cachedArticle || null);
                             console.groupEnd();
                         } catch (e) {}
 
@@ -953,20 +1137,11 @@
                                     throw new Error('Unable to access iframe document');
                                 }
                             } else if (plainTextarea) {
-                                // don't overwrite if there's meaningful text already
-                                if (plainTextarea.value && plainTextarea.value.trim().length > 0) {
-                                    console.log('[AssessmentHelper] textarea already has content; skipping overwrite.');
-                                } else {
-                                    plainTextarea.value = answerText;
-                                    plainTextarea.dispatchEvent(new Event('input', { bubbles: true }));
-                                }
+                                plainTextarea.value = answerText;
+                                plainTextarea.dispatchEvent(new Event('input', { bubbles: true }));
                             } else if (contentEditable) {
-                                if (contentEditable.innerText && contentEditable.innerText.trim().length > 0) {
-                                    console.log('[AssessmentHelper] contenteditable already has content; skipping overwrite.');
-                                } else {
-                                    contentEditable.innerHTML = answerText;
-                                    contentEditable.dispatchEvent(new Event('input', { bubbles: true }));
-                                }
+                                contentEditable.innerHTML = answerText;
+                                contentEditable.dispatchEvent(new Event('input', { bubbles: true }));
                             }
 
                             // stop after write insertion
@@ -990,7 +1165,8 @@
 
                         try {
                             console.groupCollapsed('[AssessmentHelper] Sent (MC) payload');
-                            console.log({ q: queryContent, article: this.cachedArticle || null });
+                            console.log('q:', queryContent);
+                            console.log('article:', this.cachedArticle || null);
                             console.groupEnd();
                         } catch (e) {}
 
@@ -1104,7 +1280,7 @@
                     const cont = await attemptOnce();
                     if (!this.isRunning) break;
                     if (!cont) break;
-                    const waitMs = Math.max(0, Math.round(Number(this.getMCWait()) || this.defaults.mc_wait));
+                    const waitMs = Number(this.getMCWait()) || this.defaults.mc_wait;
                     await new Promise(r => setTimeout(r, waitMs));
                 }
             } finally {
@@ -1122,94 +1298,6 @@
                 } else {
                     this._stoppedByWrite = false;
                 }
-            }
-        }
-
-        // -------- destroy / cleanup --------
-        destroy() {
-            try {
-                // Stop the solver & abort pending fetch
-                this.stopProcessImmediate();
-
-                // Destroy draggie if present
-                try {
-                    if (this._draggie && typeof this._draggie.destroy === 'function') {
-                        this._draggie.destroy();
-                    }
-                } catch (e) {}
-
-                // Remove any bound event listeners we stored
-                try {
-                    // document-level
-                    if (this._boundHandlers.documentMouseMove) document.removeEventListener('mousemove', this._boundHandlers.documentMouseMove);
-                    if (this._boundHandlers.documentMouseUp) document.removeEventListener('mouseup', this._boundHandlers.documentMouseUp);
-                    if (this._boundHandlers.documentMouseLeave) document.removeEventListener('mouseleave', this._boundHandlers.documentMouseLeave);
-
-                    // DOM element handlers
-                    const launcher = document.getElementById('Launcher');
-                    const answerContainer = document.getElementById('answerContainer');
-                    if (launcher) {
-                        const closeButton = launcher.querySelector('#closeButton');
-                        const getAnswerButton = launcher.querySelector('#getAnswerButton');
-                        const settingsCog = launcher.querySelector('#settingsCog');
-                        const settingsBack = launcher.querySelector('#settingsBack');
-
-                        if (closeButton) {
-                            if (this._boundHandlers.closeButtonClick) closeButton.removeEventListener('click', this._boundHandlers.closeButtonClick);
-                            if (this._boundHandlers.closeButtonDown) closeButton.removeEventListener('mousedown', this._boundHandlers.closeButtonDown);
-                            if (this._boundHandlers.closeButtonUp) closeButton.removeEventListener('mouseup', this._boundHandlers.closeButtonUp);
-                        }
-                        if (getAnswerButton) {
-                            if (this._boundHandlers.getBtnEnter) getAnswerButton.removeEventListener('mouseenter', this._boundHandlers.getBtnEnter);
-                            if (this._boundHandlers.getBtnLeave) getAnswerButton.removeEventListener('mouseleave', this._boundHandlers.getBtnLeave);
-                            if (this._boundHandlers.getBtnDown) getAnswerButton.removeEventListener('mousedown', this._boundHandlers.getBtnDown);
-                            if (this._boundHandlers.getBtnUp) getAnswerButton.removeEventListener('mouseup', this._boundHandlers.getBtnUp);
-                            if (this._boundHandlers.getBtnClick) getAnswerButton.removeEventListener('click', this._boundHandlers.getBtnClick);
-                        }
-                        if (settingsCog && this._boundHandlers.openSettings) settingsCog.removeEventListener('click', this._boundHandlers.openSettings);
-                        if (settingsBack && this._boundHandlers.backSettings) settingsBack.removeEventListener('click', this._boundHandlers.backSettings);
-
-                        // answer drag handle
-                        if (answerContainer) {
-                            const answerDragHandle = answerContainer.querySelector('.answer-drag-handle');
-                            if (answerDragHandle && this._boundHandlers.answerHandleDown) answerDragHandle.removeEventListener('mousedown', this._boundHandlers.answerHandleDown);
-                        }
-
-                        // close answer
-                        const closeAnswerButton = answerContainer ? answerContainer.querySelector('#closeAnswerButton') : null;
-                        if (closeAnswerButton) {
-                            if (this._boundHandlers.closeAnswerClick) closeAnswerButton.removeEventListener('click', this._boundHandlers.closeAnswerClick);
-                            if (this._boundHandlers.closeAnswerDown) closeAnswerButton.removeEventListener('mousedown', this._boundHandlers.closeAnswerDown);
-                            if (this._boundHandlers.closeAnswerUp) closeAnswerButton.removeEventListener('mouseup', this._boundHandlers.closeAnswerUp);
-                        }
-                    }
-
-                } catch (e) {}
-
-                // Remove DOM nodes
-                try {
-                    const launcherEl = document.getElementById('Launcher');
-                    if (launcherEl) launcherEl.remove();
-                    const answerEl = document.getElementById('answerContainer');
-                    if (answerEl) answerEl.remove();
-                    const intro = document.getElementById('introLoaderImage');
-                    if (intro) intro.remove();
-                } catch (e) {}
-
-                // Clear bound handlers map
-                this._boundHandlers = {};
-
-                // Nullify references
-                this.itemMetadata = null;
-                this.cachedArticle = null;
-                this._draggie = null;
-                this.currentAbortController = null;
-                this.isRunning = false;
-                this._stoppedByWrite = false;
-
-                console.log('[AssessmentHelper] destroyed and removed from DOM');
-            } catch (err) {
-                console.error('[AssessmentHelper] destroy error:', err);
             }
         }
     }
