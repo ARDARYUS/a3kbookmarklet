@@ -1,4 +1,4 @@
-// AssessmentHelper — fixed expansion anchor, fade transitions, cog hover rotate, spawn left by default
+// AssessmentHelper — persist position, destroy on close, cleanup listeners (drop-in replacement)
 (function () {
     try { console.clear(); } catch (e) {}
     console.log('[AssessmentHelper] injected');
@@ -7,10 +7,16 @@
         if (document.getElementById('Launcher')) {
             return;
         }
+        if (window.__AssessmentHelperActive) {
+            // another helper instance flagged active (guard)
+            return;
+        }
+        window.__AssessmentHelperActive = true;
     } catch (e) {}
 
     class AssessmentHelper {
         constructor() {
+            // internal state
             this.answerIsDragging = false;
             this.answerInitialX = 0;
             this.answerInitialY = 0;
@@ -23,6 +29,9 @@
 
             this.eyeState = 'sleep';
             this.currentVideo = null;
+
+            this._draggie = null;
+            this._launcherManualDragging = false;
 
             this.animeScriptUrl = 'https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js';
             this.draggabillyScriptUrl = 'https://unpkg.com/draggabilly@3/dist/draggabilly.pkgd.min.js';
@@ -65,6 +74,14 @@
             // store anchor used when settings opened so restore is consistent (prevents twitch)
             this._lastAnchorAtOpen = undefined;
 
+            // handlers to remove later
+            this._answerMouseMove = null;
+            this._answerMouseUp = null;
+            this._answerMouseLeave = null;
+            this._launcherMouseMove = null;
+            this._launcherMouseUp = null;
+            this._dragHandleMouseDown = null;
+
             if (document.readyState === 'loading') {
                 document.addEventListener('DOMContentLoaded', () => this.init());
             } else {
@@ -102,6 +119,60 @@
             this.saveSetting(this.settingsKeys.w_blacklist, '');
             this.saveSetting(this.settingsKeys.w_lowercase, this.defaults.w_lowercase ? 'true' : 'false');
             this.saveSetting(this.settingsKeys.w_mood, '');
+        }
+
+        // -------- position persistence helpers --------
+        _saveLauncherPositionFromRect() {
+            const launcher = document.getElementById('Launcher');
+            if (!launcher) return;
+            const rect = launcher.getBoundingClientRect();
+            const distanceToLeft = rect.left;
+            const distanceToRight = window.innerWidth - rect.right;
+            const anchor = (distanceToLeft <= distanceToRight) ? 'left' : 'right';
+            try {
+                if (anchor === 'left') {
+                    localStorage.setItem('ah_pos_anchor', 'left');
+                    localStorage.setItem('ah_pos_left', String(Math.round(rect.left)));
+                    localStorage.removeItem('ah_pos_right');
+                } else {
+                    localStorage.setItem('ah_pos_anchor', 'right');
+                    const rightCss = Math.round(window.innerWidth - rect.right);
+                    localStorage.setItem('ah_pos_right', String(rightCss));
+                    localStorage.removeItem('ah_pos_left');
+                }
+                localStorage.setItem('ah_pos_top', String(Math.round(rect.top)));
+            } catch (e) {}
+        }
+
+        _applyLauncherPositionFromStorage() {
+            const launcher = document.getElementById('Launcher');
+            if (!launcher) return;
+            const anchor = localStorage.getItem('ah_pos_anchor');
+            const top = localStorage.getItem('ah_pos_top');
+            const left = localStorage.getItem('ah_pos_left');
+            const right = localStorage.getItem('ah_pos_right');
+
+            // reset width handling so anchor calculation stable
+            launcher.style.position = 'fixed';
+
+            if (anchor === 'right' && right !== null) {
+                launcher.style.right = `${Number(right)}px`;
+                launcher.style.left = 'auto';
+            } else if (anchor === 'left' && left !== null) {
+                launcher.style.left = `${Number(left)}px`;
+                launcher.style.right = 'auto';
+            } else {
+                // nothing saved - keep default (left:20px) already set in creation
+            }
+
+            if (top !== null) {
+                launcher.style.top = `${Number(top)}px`;
+                // ensure transform vertical centering isn't interfering
+                launcher.style.transform = 'translateY(0)';
+            } else {
+                // keep default translateY(-50%)
+                launcher.style.transform = 'translateY(-50%)';
+            }
         }
 
         // -------- resources & element helpers --------
@@ -171,7 +242,7 @@
         createUI() {
             const container = this.createEl('div');
 
-            // NOTE: default spawn on LEFT side now (left:20px)
+            // default spawn on LEFT side now (left:20px)
             const launcher = this.createEl('div', {
                 id: 'Launcher',
                 className: 'Launcher',
@@ -340,6 +411,10 @@
             try { document.body.appendChild(this.itemMetadata.UI); document.body.appendChild(this.itemMetadata.answerUI); } catch (e) {}
             const launcher = document.getElementById('Launcher');
             if (!launcher) { this.setupEventListeners(); return; }
+
+            // Apply saved position if it exists
+            this._applyLauncherPositionFromStorage();
+
             if (skipAnimation) {
                 launcher.style.visibility = 'visible';
                 launcher.style.opacity = 1;
@@ -428,7 +503,7 @@
             }
         }
 
-        // -------- Eye helpers --------
+        // -------- Eye helpers (unchanged) --------
         setEyeToSleep() {
             if (this.eyeState === 'full') return;
             try {
@@ -538,7 +613,7 @@
             } catch (err) {}
         }
 
-        // -------- UI start/stop --------
+        // -------- UI start/stop (unchanged) --------
         async startProcessUI() {
             const btn = document.getElementById('getAnswerButton');
             const spinner = document.getElementById('ah-spinner');
@@ -570,7 +645,7 @@
             }
         }
 
-        // -------- Settings UI flows with directional expansion & eye shrink --------
+        // -------- Settings UI flows with directional expansion & eye shrink (unchanged) --------
         _computeExpandRight() {
             const launcher = document.getElementById('Launcher');
             if (!launcher) return true;
@@ -602,6 +677,9 @@
                 launcher.style.left = 'auto';
                 launcher.style.width = `${widthPx}px`;
             }
+
+            // save last anchor for consistent close/restore behavior
+            this._lastAnchorAtOpen = expandRight;
         }
 
         _shrinkEyeToTopRight() {
@@ -954,10 +1032,51 @@
                     .answerLauncher.show { opacity: 1; visibility: visible; transform: translateY(-50%) scale(1); }
                 `);
 
+                // Draggabilly (if available) for launcher — store instance and listen for dragEnd to save pos
                 if (typeof Draggabilly !== 'undefined') {
-                    try { new Draggabilly(launcher, { handle: '.drag-handle', delay: 50 }); } catch (e) {}
+                    try {
+                        // keep reference so we can destroy on close
+                        this._draggie = new Draggabilly(launcher, { handle: '.drag-handle', delay: 50 });
+                        try { this._draggie.on('dragEnd', () => { this._saveLauncherPositionFromRect(); }); } catch (e) {}
+                    } catch (e) { this._draggie = null; }
+                } else {
+                    // fallback manual drag for launcher (only active if Draggabilly not present)
+                    const dragHandle = launcher.querySelector('.drag-handle');
+                    if (dragHandle) {
+                        this._dragHandleMouseDown = (e) => {
+                            e.preventDefault();
+                            this._launcherManualDragging = true;
+                            const rect = launcher.getBoundingClientRect();
+                            this._launcherDragOffsetX = e.clientX - rect.left;
+                            this._launcherDragOffsetY = e.clientY - rect.top;
+                            // attach move/up handlers
+                            this._launcherMouseMove = (ev) => {
+                                if (!this._launcherManualDragging) return;
+                                const newLeft = ev.clientX - this._launcherDragOffsetX;
+                                const newTop = ev.clientY - this._launcherDragOffsetY;
+                                // keep anchored by left by default while dragging
+                                launcher.style.left = `${Math.max(0, newLeft)}px`;
+                                launcher.style.top = `${Math.max(0, newTop)}px`;
+                                launcher.style.right = 'auto';
+                                launcher.style.transform = 'translateY(0)';
+                            };
+                            this._launcherMouseUp = (ev) => {
+                                if (!this._launcherManualDragging) return;
+                                this._launcherManualDragging = false;
+                                // remove these handlers
+                                document.removeEventListener('mousemove', this._launcherMouseMove);
+                                document.removeEventListener('mouseup', this._launcherMouseUp);
+                                // save position
+                                this._saveLauncherPositionFromRect();
+                            };
+                            document.addEventListener('mousemove', this._launcherMouseMove);
+                            document.addEventListener('mouseup', this._launcherMouseUp);
+                        };
+                        dragHandle.addEventListener('mousedown', this._dragHandleMouseDown);
+                    }
                 }
 
+                // ANSWER bubble dragging — use named handlers so we can remove later
                 const answerDragHandle = answerContainer.querySelector('.answer-drag-handle');
                 if (answerDragHandle) {
                     answerDragHandle.addEventListener('mousedown', (e) => {
@@ -970,7 +1089,8 @@
                     });
                 }
 
-                document.addEventListener('mousemove', (e) => {
+                // named handlers to remove later
+                this._answerMouseMove = (e) => {
                     if (this.answerIsDragging && answerContainer) {
                         e.preventDefault();
                         const newX = e.clientX - this.answerInitialX;
@@ -981,26 +1101,25 @@
                         answerContainer.style.bottom = '';
                         answerContainer.style.transform = 'none';
                     }
-                });
+                };
+                this._answerMouseUp = () => { this.answerIsDragging = false; };
+                this._answerMouseLeave = () => { this.answerIsDragging = false; };
 
-                const stopDrag = () => (this.answerIsDragging = false);
-                document.addEventListener('mouseup', stopDrag);
-                document.addEventListener('mouseleave', stopDrag);
+                document.addEventListener('mousemove', this._answerMouseMove);
+                document.addEventListener('mouseup', this._answerMouseUp);
+                document.addEventListener('mouseleave', this._answerMouseLeave);
 
+                // close main launcher — now fully destroy the UI
                 if (closeButton) {
-                    closeButton.addEventListener('click', () => {
-                        launcher.style.opacity = 0;
-                        launcher.addEventListener('transitionend', function handler() {
-                            if (parseFloat(launcher.style.opacity) === 0) {
-                                launcher.style.visibility = 'hidden';
-                                launcher.removeEventListener('transitionend', handler);
-                            }
-                        }, { once: true });
+                    closeButton.addEventListener('click', (ev) => {
+                        ev.preventDefault();
+                        this.destroy();
                     });
                     closeButton.addEventListener('mousedown', () => (closeButton.style.transform = 'scale(0.95)'));
                     closeButton.addEventListener('mouseup', () => (closeButton.style.transform = 'scale(1)'));
                 }
 
+                // close answer bubble
                 if (closeAnswerButton) {
                     closeAnswerButton.addEventListener('click', () => {
                         answerContainer.style.opacity = 0;
@@ -1043,7 +1162,90 @@
                 if (settingsCog) settingsCog.addEventListener('click', (e) => { e.preventDefault(); this.openSettingsMenu(); });
                 if (settingsBack) settingsBack.addEventListener('click', (e) => { e.preventDefault(); this.backFromSettings(); });
 
-            } catch (e) {}
+            } catch (e) {
+                console.error('[AssessmentHelper] setupEventListeners error', e);
+            }
+        }
+
+        // destroy: remove UI + listeners + draggie + clear active flag so re-injection possible
+        destroy() {
+            try {
+                // stop running process
+                this.stopProcessImmediate();
+
+                // remove draggie if exists
+                if (this._draggie && typeof this._draggie.destroy === 'function') {
+                    try { this._draggie.destroy(); } catch (e) {}
+                    this._draggie = null;
+                }
+
+                // remove fallback drag handle listener if attached
+                try {
+                    const launcher = document.getElementById('Launcher');
+                    if (launcher) {
+                        const dragHandle = launcher.querySelector('.drag-handle');
+                        if (dragHandle && this._dragHandleMouseDown) {
+                            try { dragHandle.removeEventListener('mousedown', this._dragHandleMouseDown); } catch (e) {}
+                            this._dragHandleMouseDown = null;
+                        }
+                    }
+                } catch (e) {}
+
+                // remove answer bubble handlers
+                if (this._answerMouseMove) {
+                    try { document.removeEventListener('mousemove', this._answerMouseMove); } catch (e) {}
+                    this._answerMouseMove = null;
+                }
+                if (this._answerMouseUp) {
+                    try { document.removeEventListener('mouseup', this._answerMouseUp); } catch (e) {}
+                    this._answerMouseUp = null;
+                }
+                if (this._answerMouseLeave) {
+                    try { document.removeEventListener('mouseleave', this._answerMouseLeave); } catch (e) {}
+                    this._answerMouseLeave = null;
+                }
+
+                // remove launcher manual move handlers if any left
+                if (this._launcherMouseMove) {
+                    try { document.removeEventListener('mousemove', this._launcherMouseMove); } catch (e) {}
+                    this._launcherMouseMove = null;
+                }
+                if (this._launcherMouseUp) {
+                    try { document.removeEventListener('mouseup', this._launcherMouseUp); } catch (e) {}
+                    this._launcherMouseUp = null;
+                }
+
+                // remove actual DOM elements
+                const uiRoot = this.itemMetadata && this.itemMetadata.UI ? this.itemMetadata.UI : null;
+                if (uiRoot && uiRoot.parentNode) {
+                    try { uiRoot.parentNode.removeChild(uiRoot); } catch (e) {}
+                } else {
+                    // fallback remove Launcher element
+                    const launcher = document.getElementById('Launcher');
+                    if (launcher && launcher.parentNode) {
+                        try { launcher.parentNode.removeChild(launcher); } catch (e) {}
+                    }
+                }
+                const answerUIRoot = this.itemMetadata && this.itemMetadata.answerUI ? this.itemMetadata.answerUI : null;
+                if (answerUIRoot && answerUIRoot.parentNode) {
+                    try { answerUIRoot.parentNode.removeChild(answerUIRoot); } catch (e) {}
+                } else {
+                    const answerContainer = document.getElementById('answerContainer');
+                    if (answerContainer && answerContainer.parentNode) {
+                        try { answerContainer.parentNode.removeChild(answerContainer); } catch (e) {}
+                    }
+                }
+
+                // clear marker allowing re-injection
+                try { window.__AssessmentHelperActive = false; } catch (e) {}
+
+                // remove references
+                this.itemMetadata = null;
+
+                console.log('[AssessmentHelper] destroyed');
+            } catch (err) {
+                console.error('[AssessmentHelper] destroy error', err);
+            }
         }
 
         // -------- solver loop (uses settings & random MC) --------
@@ -1318,5 +1520,5 @@
         }
     }
 
-    try { new AssessmentHelper(); } catch (e) {}
+    try { new AssessmentHelper(); } catch (e) { console.error('[AssessmentHelper] init error', e); window.__AssessmentHelperActive = false; }
 })();
