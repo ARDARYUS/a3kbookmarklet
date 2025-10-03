@@ -1,4 +1,4 @@
-// AssessmentHelper — settings expansion direction bugfix + writing settings features
+// AssessmentHelper — fixed expansion anchor, fade transitions, cog hover rotate, spawn left by default
 (function () {
     try { console.clear(); } catch (e) {}
     console.log('[AssessmentHelper] injected');
@@ -62,6 +62,9 @@
             // store original eye style so we can restore after settings
             this._eyeOriginal = null;
 
+            // store anchor used when settings opened so restore is consistent (prevents twitch)
+            this._lastAnchorAtOpen = undefined;
+
             if (document.readyState === 'loading') {
                 document.addEventListener('DOMContentLoaded', () => this.init());
             } else {
@@ -77,18 +80,15 @@
             try {
                 const v = localStorage.getItem(key);
                 if (v === null || v === undefined) return fallback;
-                // booleans handled separately by callers if needed
                 return v;
             } catch (e) { return fallback; }
         }
 
-        // typed helpers
         getMCWait() { return Number(localStorage.getItem(this.settingsKeys.mc_wait) || this.defaults.mc_wait); }
         getMCRandomPct() { return Number(localStorage.getItem(this.settingsKeys.mc_random_pct) || this.defaults.mc_random_pct); }
         resetMCWait() { this.saveSetting(this.settingsKeys.mc_wait, this.defaults.mc_wait); }
         resetMCRandom() { this.saveSetting(this.settingsKeys.mc_random_pct, this.defaults.mc_random_pct); }
 
-        // writing settings helpers (string or number / boolean)
         getWMin() { const v = localStorage.getItem(this.settingsKeys.w_min); return v === null ? '' : v; }
         getWMax() { const v = localStorage.getItem(this.settingsKeys.w_max); return v === null ? '' : v; }
         getWLevel() { return localStorage.getItem(this.settingsKeys.w_level) || this.defaults.w_level; }
@@ -171,11 +171,12 @@
         createUI() {
             const container = this.createEl('div');
 
+            // NOTE: default spawn on LEFT side now (left:20px)
             const launcher = this.createEl('div', {
                 id: 'Launcher',
                 className: 'Launcher',
                 style:
-                    "min-height:160px;opacity:0;visibility:hidden;transition:opacity 0.25s ease,width 0.25s ease,font-size .12s ease;font-family:'Nunito',sans-serif;width:180px;height:240px;background:#010203;position:fixed;border-radius:12px;border:2px solid #0a0b0f;display:flex;flex-direction:column;align-items:center;color:white;font-size:16px;top:50%;right:20px;transform:translateY(-50%);z-index:99999;padding:16px;box-shadow:0 10px 8px rgba(0,0,0,0.2), 0 0 8px rgba(255,255,255,0.05);overflow:hidden;white-space:nowrap;"
+                    "min-height:160px;opacity:0;visibility:hidden;transition:opacity 0.25s ease,width 0.25s ease,font-size .12s ease;font-family:'Nunito',sans-serif;width:180px;height:240px;background:#010203;position:fixed;border-radius:12px;border:2px solid #0a0b0f;display:flex;flex-direction:column;align-items:center;color:white;font-size:16px;top:50%;left:20px;transform:translateY(-50%);z-index:99999;padding:16px;box-shadow:0 10px 8px rgba(0,0,0,0.2), 0 0 8px rgba(255,255,255,0.05);overflow:hidden;white-space:nowrap;"
             });
 
             const dragHandle = this.createEl('div', {
@@ -215,7 +216,7 @@
                 style: 'position:absolute;top:8px;right:8px;background:none;border:none;color:white;font-size:18px;cursor:pointer;padding:2px 8px;transition:color 0.12s ease, transform 0.1s ease;opacity:0.5;z-index:100005;'
             });
 
-            // Main action button: style like settings buttons (colors) with hover later
+            // Main action button
             const getAnswerButton = this.createEl('button', {
                 id: 'getAnswerButton',
                 style:
@@ -240,7 +241,7 @@
                 id: 'settingsCog',
                 title: 'Settings',
                 innerHTML: '⚙',
-                style: 'position:absolute;bottom:8px;left:8px;background:none;border:none;color:#cfcfcf;font-size:16px;cursor:pointer;opacity:0.85;padding:2px;transition:transform .12s;z-index:100005'
+                style: 'position:absolute;bottom:8px;left:8px;background:none;border:none;color:#cfcfcf;font-size:16px;cursor:pointer;opacity:0.85;padding:2px;transition:transform .12s;z-index:100005;transform-origin:50% 50%;'
             });
 
             // BACK ARROW (same spot, initially hidden)
@@ -254,7 +255,7 @@
             // Settings menu container (hidden by default)
             const settingsPanel = this.createEl('div', {
                 id: 'settingsPanel',
-                style: 'position:absolute;top:48px;left:12px;right:12px;bottom:48px;display:none;flex-direction:column;align-items:flex-start;gap:8px;overflow:auto;'
+                style: 'position:absolute;top:48px;left:12px;right:12px;bottom:48px;display:none;flex-direction:column;align-items:flex-start;gap:8px;overflow:auto;opacity:0;transition:opacity .18s;'
             });
 
             launcher.appendChild(dragHandle);
@@ -268,7 +269,7 @@
 
             container.appendChild(launcher);
 
-            // spinner keyframes & minor styles + hover rules for buttons & settings
+            // spinner keyframes & minor styles + hover rules for buttons & settings + cog hover rotation
             this.applyStylesOnce('assessment-helper-spinner-styles', `
                 @keyframes ah-spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
                 #getAnswerButton.running { background: #1e1e1e; box-shadow: 0 4px 12px rgba(0,0,0,0.35); }
@@ -280,6 +281,8 @@
                 #settingsPanel button { transition: background 0.12s ease, transform 0.08s ease; }
                 #settingsPanel button:hover { background:#222; transform: translateY(-1px); }
                 #getAnswerButton:hover { background: #1f1f1f !important; transform: translateY(-1px); }
+                #settingsCog { transition: transform 0.12s ease, opacity 0.12s ease; }
+                #settingsCog:hover { transform: rotate(22.5deg); }
                 /* small input / textarea styles */
                 #settingsPanel textarea { width:100%; min-height:60px; resize:vertical; padding:6px; border-radius:6px; border:1px solid rgba(255,255,255,0.06); background:transparent; color:white; }
                 #settingsPanel select { padding:6px; border-radius:6px; border:1px solid rgba(255,255,255,0.06); background:transparent; color:white; }
@@ -579,7 +582,6 @@
         }
 
         _setLauncherWidthAndAnchor(widthPx, expandRight) {
-            // FIXED: compute new left so there is no small shift when expanding left
             const launcher = document.getElementById('Launcher');
             if (!launcher) return;
             const rect = launcher.getBoundingClientRect();
@@ -594,12 +596,10 @@
                 launcher.style.right = 'auto';
                 launcher.style.width = `${widthPx}px`;
             } else {
-                // anchor so the right edge stays where it was: set left = rect.right - widthPx
-                const newLeft = Math.round(rect.right - widthPx);
-                // Ensure newLeft not negative
-                const finalLeft = Math.max(0, newLeft);
-                launcher.style.left = `${finalLeft}px`;
-                launcher.style.right = 'auto';
+                // anchor by current right: compute distance from right edge and set right CSS to keep right edge stable
+                const rightCss = Math.round(window.innerWidth - rect.right);
+                launcher.style.right = `${rightCss}px`;
+                launcher.style.left = 'auto';
                 launcher.style.width = `${widthPx}px`;
             }
         }
@@ -607,14 +607,12 @@
         _shrinkEyeToTopRight() {
             const eye = document.getElementById('helperEye');
             if (!eye) return;
-            // Save original once
             if (!this._eyeOriginal) {
                 this._eyeOriginal = {
                     style: eye.getAttribute('style') || '',
                     parentDisplay: eye.style.display || ''
                 };
             }
-            // Shrink and move under the X, inside the launcher
             eye.style.display = 'flex';
             eye.style.position = 'absolute';
             eye.style.top = '12px';
@@ -623,7 +621,6 @@
             eye.style.height = '48px';
             eye.style.marginTop = '0';
             eye.style.zIndex = '100004';
-            // also shrink internal img
             const img = document.getElementById('helperEyeImg');
             if (img) img.style.width = '100%';
         }
@@ -632,11 +629,9 @@
             const eye = document.getElementById('helperEye');
             if (!eye) return;
             if (this._eyeOriginal) {
-                // restore style string (safe)
                 eye.setAttribute('style', this._eyeOriginal.style);
                 this._eyeOriginal = null;
             } else {
-                // fallback restore approximate layout
                 eye.style.position = '';
                 eye.style.top = '';
                 eye.style.right = '';
@@ -687,21 +682,25 @@
         openSettingsMenu() {
             const launcher = document.getElementById('Launcher');
             if (!launcher) return;
-            const eye = document.getElementById('helperEye');
             const btn = document.getElementById('getAnswerButton');
 
             // compute direction and set width to menu-size
             const expandRight = this._computeExpandRight();
+            this._lastAnchorAtOpen = expandRight;
             this._setLauncherWidthAndAnchor(360, expandRight);
 
             // shrink eye but keep visible at top-right
             this._shrinkEyeToTopRight();
 
             // fade out main items except version & close & cog/back
-            if (btn) { btn.style.transition = 'opacity 0.12s'; btn.style.opacity = '0'; setTimeout(()=>btn.style.display='none',140); }
+            if (btn) {
+                btn.style.transition = 'opacity 0.12s';
+                btn.style.opacity = '0';
+                setTimeout(()=>{ btn.style.display='none'; }, 160);
+            }
 
             const panel = document.getElementById('settingsPanel');
-            if (panel) { panel.style.display = 'flex'; panel.style.opacity = '1'; }
+            if (panel) { panel.style.display = 'flex'; setTimeout(()=>{ panel.style.opacity = '1'; }, 10); }
 
             // replace cog with back arrow
             const settingsCog = document.getElementById('settingsCog');
@@ -715,7 +714,7 @@
 
         openMCSettings() {
             const panel = document.getElementById('settingsPanel');
-            const expandRight = this._computeExpandRight();
+            const expandRight = (this._lastAnchorAtOpen !== undefined) ? this._lastAnchorAtOpen : this._computeExpandRight();
             this._setLauncherWidthAndAnchor(520, expandRight);
             if (!panel) return;
             panel.innerHTML = '';
@@ -756,7 +755,7 @@
 
         openWritingSettings() {
             const panel = document.getElementById('settingsPanel');
-            const expandRight = this._computeExpandRight();
+            const expandRight = (this._lastAnchorAtOpen !== undefined) ? this._lastAnchorAtOpen : this._computeExpandRight();
             this._setLauncherWidthAndAnchor(520, expandRight);
             this.settingsState = 'writing';
             if (!panel) return;
@@ -835,7 +834,7 @@
 
         openAISettings() {
             const panel = document.getElementById('settingsPanel');
-            const expandRight = this._computeExpandRight();
+            const expandRight = (this._lastAnchorAtOpen !== undefined) ? this._lastAnchorAtOpen : this._computeExpandRight();
             this._setLauncherWidthAndAnchor(520, expandRight);
             this.settingsState = 'ai';
             if (!panel) return;
@@ -844,17 +843,15 @@
             const title = this.createEl('div', { className: 'ah-section-title', text: 'AI Settings' });
             panel.appendChild(title);
 
-            // default method display (the URL method is hard-coded, but UI allows toggling)
+            // method toggle
             const methodRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;' });
             const methodLabel = this.createEl('label', { text: 'Use direct API (toggle):', style: 'min-width:160px;' });
             const methodToggle = this.createEl('input', { type: 'checkbox', id: 'aiUseApiToggle' });
-            // read saved setting (string 'true'/'false')
             const useApiStored = localStorage.getItem(this.settingsKeys.ai_use_api);
             methodToggle.checked = (useApiStored === 'true');
             methodRow.appendChild(methodLabel); methodRow.appendChild(methodToggle);
             panel.appendChild(methodRow);
 
-            // groq url (editable but default points to cloudflare when toggled off in earlier versions)
             const urlRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;width:100%;' });
             const urlLabel = this.createEl('label', { text: 'Groq URL:', style: 'min-width:160px;' });
             const urlInput = this.createEl('input', { type: 'text', id: 'aiGroqUrlInput', value: localStorage.getItem(this.settingsKeys.ai_groq_url) || 'https://api.groq.com/openai/v1/chat/completions', style: 'flex:1;' });
@@ -864,7 +861,6 @@
             urlRow.appendChild(urlLabel); urlRow.appendChild(urlInput); urlRow.appendChild(urlReset);
             panel.appendChild(urlRow);
 
-            // api key (stored locally)
             const keyRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;width:100%;' });
             const keyLabel = this.createEl('label', { text: 'Groq API key:', style: 'min-width:160px;' });
             const keyInput = this.createEl('input', { type: 'text', id: 'aiGroqKeyInput', value: localStorage.getItem(this.settingsKeys.ai_groq_key) || '', placeholder: 'paste your key here', style: 'flex:1;' });
@@ -874,20 +870,18 @@
             keyRow.appendChild(keyLabel); keyRow.appendChild(keyInput); keyRow.appendChild(keyReset);
             panel.appendChild(keyRow);
 
-            // model row
             const modelRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;width:100%;' });
             const modelLabel = this.createEl('label', { text: 'Model:', style: 'min-width:160px;' });
             const modelInput = this.createEl('input', { type: 'text', id: 'aiGroqModelInput', value: localStorage.getItem(this.settingsKeys.ai_groq_model) || 'llama-3.1-8b-instant', style: 'flex:1;' });
             modelRow.appendChild(modelLabel); modelRow.appendChild(modelInput);
             panel.appendChild(modelRow);
 
-            // save changes bindings
             methodToggle.addEventListener('change', () => { this.saveSetting(this.settingsKeys.ai_use_api, methodToggle.checked ? 'true' : 'false'); });
             urlInput.addEventListener('change', () => { this.saveSetting(this.settingsKeys.ai_groq_url, urlInput.value || ''); });
             keyInput.addEventListener('change', () => { this.saveSetting(this.settingsKeys.ai_groq_key, keyInput.value || ''); });
             modelInput.addEventListener('change', () => { this.saveSetting(this.settingsKeys.ai_groq_model, modelInput.value || 'llama-3.1-8b-instant'); });
 
-            // initialize saved
+            // ensure saved defaults persisted
             this.saveSetting(this.settingsKeys.ai_groq_url, urlInput.value);
             this.saveSetting(this.settingsKeys.ai_groq_model, modelInput.value);
             if (keyInput.value) this.saveSetting(this.settingsKeys.ai_groq_key, keyInput.value);
@@ -895,15 +889,14 @@
 
         backFromSettings() {
             const launcher = document.getElementById('Launcher');
-            const eye = document.getElementById('helperEye');
             const btn = document.getElementById('getAnswerButton');
             const settingsPanel = document.getElementById('settingsPanel');
             const settingsCog = document.getElementById('settingsCog');
             const settingsBack = document.getElementById('settingsBack');
 
             if (this.settingsState === 'mc' || this.settingsState === 'writing' || this.settingsState === 'ai') {
-                // shrink to menu view
-                const expandRight = this._computeExpandRight();
+                // shrink to menu view using the same anchor we used when opening to avoid twitch
+                const expandRight = (this._lastAnchorAtOpen !== undefined) ? this._lastAnchorAtOpen : this._computeExpandRight();
                 this._setLauncherWidthAndAnchor(360, expandRight);
                 this.settingsState = 'menu';
                 this.buildSettingsMenu();
@@ -911,19 +904,31 @@
             }
 
             if (this.settingsState === 'menu') {
-                // hide panel
-                if (settingsPanel) { settingsPanel.style.display = 'none'; settingsPanel.innerHTML = ''; }
-                // restore main button
-                if (btn) { btn.style.display = 'flex'; setTimeout(()=>btn.style.opacity='1',10); }
+                // hide panel with fade
+                if (settingsPanel) {
+                    settingsPanel.style.opacity = '0';
+                    setTimeout(() => { if (settingsPanel) { settingsPanel.style.display = 'none'; settingsPanel.innerHTML = ''; } }, 160);
+                }
+
+                // restore main button with fade
+                if (btn) {
+                    btn.style.display = 'flex';
+                    btn.style.opacity = '0';
+                    setTimeout(()=>{ btn.style.opacity = '1'; }, 10);
+                }
+
                 // restore cog/back
                 if (settingsBack) { settingsBack.style.opacity = '0'; setTimeout(()=>settingsBack.style.display='none',120); }
                 if (settingsCog) settingsCog.style.display = 'block';
-                // shrink launcher back (restore to default 180)
-                const expandRight = this._computeExpandRight();
+
+                // shrink launcher back (use the anchor stored when opened to keep the pinned side stable)
+                const expandRight = (this._lastAnchorAtOpen !== undefined) ? this._lastAnchorAtOpen : this._computeExpandRight();
                 this._setLauncherWidthAndAnchor(180, expandRight);
+
                 // restore eye full size & original placement
                 this._restoreEyeFromShrink();
                 this.settingsState = 'closed';
+                this._lastAnchorAtOpen = undefined;
                 return;
             }
         }
@@ -1065,7 +1070,6 @@
                         const minWords = this.getWMin();
                         const maxWords = this.getWMax();
                         if (minWords && maxWords) {
-                            // both present
                             writingPrompt += ` Use minimum ${minWords} words and maximum ${maxWords} words.`;
                         } else if (minWords) {
                             writingPrompt += ` Use minimum ${minWords} words.`;
@@ -1107,8 +1111,6 @@
                         try {
                             const blacklist = this.getWBlacklist() || '';
                             if (blacklist && blacklist.length > 0) {
-                                // remove each character in blacklist globally
-                                // build a regex that escapes special chars
                                 const chars = blacklist.split('').map(ch => ch.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')).join('|');
                                 if (chars.length > 0) {
                                     const re = new RegExp(chars, 'g');
@@ -1116,7 +1118,6 @@
                                 }
                             }
                         } catch (e) {
-                            // if regex fails, fallback to simple removal loop
                             try {
                                 const blacklist = this.getWBlacklist() || '';
                                 for (let i = 0; i < blacklist.length; i++) {
