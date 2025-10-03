@@ -1,5 +1,5 @@
 // AssessmentHelper — persist position, destroy on close, cleanup listeners (drop-in replacement)
-// + Ready/Reflect handling added per user request.
+// + Ready/Reflect handling + prompt sanitization for dynamic "Type your response..." boilerplate
 (function () {
     try { console.clear(); } catch (e) {}
     console.log('[AssessmentHelper] injected');
@@ -120,6 +120,21 @@
             this.saveSetting(this.settingsKeys.w_blacklist, '');
             this.saveSetting(this.settingsKeys.w_lowercase, this.defaults.w_lowercase ? 'true' : 'false');
             this.saveSetting(this.settingsKeys.w_mood, '');
+        }
+
+        // -------- prompt sanitization helper --------
+        _sanitizeText(text) {
+            try {
+                if (!text || typeof text !== 'string') return text;
+                // exact start and end phrases provided by user
+                const startPhrase = 'Type your response into the box, and then click Submit.';
+                const endPhrase = 'Press Alt + F10 to reach toolbarSystem Font12ptSubmit';
+                // Build regex to capture startPhrase ... endPhrase (including them), single-line or multi-line
+                const re = new RegExp(startPhrase.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&') + '[\\s\\S]*?' + endPhrase.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&'), 'g');
+                return text.replace(re, '').trim();
+            } catch (e) {
+                return text;
+            }
         }
 
         // -------- position persistence helpers --------
@@ -460,7 +475,8 @@
                     writingQuestion = '';
                 }
 
-                const combinedContent = `${articleContent}\n\n${questionContent}\n\n${writingQuestion}`;
+                let combinedContent = `${articleContent}\n\n${questionContent}\n\n${writingQuestion}`;
+                combinedContent = this._sanitizeText(combinedContent);
                 this.cachedArticle = combinedContent;
                 return combinedContent;
             } catch (err) {
@@ -477,11 +493,14 @@
                 this.currentAbortController = new AbortController();
                 const signal = this.currentAbortController.signal;
 
+                // sanitize queryContent as well just before sending
+                const sanitizedQuery = this._sanitizeText(queryContent || '');
+
                 const response = await fetch(this.askEndpoint, {
                     method: 'POST',
                     cache: 'no-cache',
                     headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ q: queryContent, article: this.cachedArticle || null }),
+                    body: JSON.stringify({ q: sanitizedQuery, article: this.cachedArticle || null }),
                     signal
                 });
 
@@ -1287,6 +1306,9 @@
                                 } catch (e) {}
                             }
 
+                            // sanitize the readyQuestion to remove the dynamic toolbar boilerplate if present
+                            readyQuestion = this._sanitizeText(readyQuestion);
+
                             // If we have a question, proceed:
                             if (readyQuestion) {
                                 try {
@@ -1311,7 +1333,7 @@
                                     const prompt = `${readyQuestion}\n\nDecide whether you AGREE or DISAGREE with this statement. Respond with exactly one word: AGREE or DISAGREE.`;
                                     try {
                                         console.groupCollapsed('[AssessmentHelper] Sent (Ready/Reflect classification) payload');
-                                        console.log('q:', prompt);
+                                        console.log('q:', this._sanitizeText(prompt));
                                         console.log('article:', this.cachedArticle || null);
                                         console.groupEnd();
                                     } catch (e) {}
@@ -1393,10 +1415,12 @@
                                     const mood = this.getWMood();
                                     if (mood) writingPrompt += ` ${mood}`;
 
-                                    // send
+                                    // sanitize prompt before sending (safety)
+                                    const sanitizedPrompt = this._sanitizeText(writingPrompt);
+
                                     try {
                                         console.groupCollapsed('[AssessmentHelper] Sent (Ready/Reflect writing) payload');
-                                        console.log('q:', writingPrompt);
+                                        console.log('q:', sanitizedPrompt);
                                         console.log('article:', this.cachedArticle || null);
                                         console.groupEnd();
                                     } catch (e) {}
@@ -1503,6 +1527,9 @@
                         // Writing flow (existing)
                         let queryContentWriting = queryContent + "\n\nPlease provide a detailed written answer based on the above article and question.";
 
+                        // sanitize writing content to remove toolbar boilerplate if present
+                        queryContentWriting = this._sanitizeText(queryContentWriting);
+
                         try {
                             console.groupCollapsed('[AssessmentHelper] Sent (writing) payload');
                             console.log('q:', queryContentWriting);
@@ -1568,6 +1595,9 @@
                         // Multiple choice mode (existing)
                         queryContent += "\n\nPROVIDE ONLY A ONE-LETTER ANSWER THAT'S IT NOTHING ELSE (A, B, C, or D).";
                         if (excludedAnswers.length > 0) queryContent += `\n\nDo not pick letter ${excludedAnswers.join(', ')}.`;
+
+                        // sanitize MC content as well
+                        queryContent = this._sanitizeText(queryContent);
 
                         try {
                             console.groupCollapsed('[AssessmentHelper] Sent (MC) payload');
