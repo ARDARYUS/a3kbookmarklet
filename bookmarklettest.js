@@ -10,6 +10,9 @@
     } catch (e) {}
 
     class AssessmentHelper {
+        constructor() {
+            // inside constructor(), near the top
+            window.__AssessmentHelperInstance = this;
 
             this.answerIsDragging = false;
             this.answerInitialX = 0;
@@ -1568,4 +1571,3 @@
 
     try { new AssessmentHelper(); } catch (e) {}
 })();
-
