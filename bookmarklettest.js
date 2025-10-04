@@ -13,7 +13,6 @@
         constructor() {
             // inside constructor(), near the top
             window.__AssessmentHelperInstance = this;
-
             this.answerIsDragging = false;
             this.answerInitialX = 0;
             this.answerInitialY = 0;
@@ -962,17 +961,39 @@
 
                 if (closeButton) {
                     closeButton.addEventListener('click', () => {
-                        launcher.style.opacity = 0;
-                        launcher.addEventListener('transitionend', function handler() {
-                            if (parseFloat(launcher.style.opacity) === 0) {
-                                launcher.style.visibility = 'hidden';
-                                launcher.removeEventListener('transitionend', handler);
+                        try {
+                            // stop any running solver immediately and abort fetches
+                            if (window.__AssessmentHelperInstance && typeof window.__AssessmentHelperInstance.stopProcessImmediate === 'function') {
+                                try { window.__AssessmentHelperInstance.stopProcessImmediate(); } catch (e) {}
                             }
+                        } catch (e) {}
+                
+                        // fade out
+                        launcher.style.opacity = 0;
+                
+                        // remove DOM nodes after fade completes, and clear global reference
+                        launcher.addEventListener('transitionend', function handler() {
+                            try {
+                                // remove the whole container that holds the launcher
+                                const launcherEl = document.getElementById('Launcher');
+                                if (launcherEl && launcherEl.parentElement) launcherEl.parentElement.remove();
+
+                                // remove answer UI container's parent (if present)
+                                const answerEl = document.getElementById('answerContainer');
+                                if (answerEl && answerEl.parentElement) answerEl.parentElement.remove();
+
+                                // clear any global pointer to instance
+                                try { window.__AssessmentHelperInstance = null; } catch (e) {}
+                            } catch (e) {}
+
+                            launcher.removeEventListener('transitionend', handler);
                         }, { once: true });
                     });
+
                     closeButton.addEventListener('mousedown', () => (closeButton.style.transform = 'scale(0.95)'));
                     closeButton.addEventListener('mouseup', () => (closeButton.style.transform = 'scale(1)'));
                 }
+
 
                 if (closeAnswerButton) {
                     closeAnswerButton.addEventListener('click', () => {
@@ -1571,3 +1592,4 @@
 
     try { new AssessmentHelper(); } catch (e) {}
 })();
+
