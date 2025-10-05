@@ -192,7 +192,7 @@
                 id: 'helperEyeImg',
                 src: this.getUrl('icons2/sleep.gif'),
                 dataset: { idle: this.getUrl('icons2/idle.gif'), tilt: this.getUrl('icons2/full.gif') },
-                style: 'width:100%;height:100%;object-fit:cover;display:block;pointer-events:none;'
+                style: 'width:150%;height:150%;object-fit:cover;display:block;pointer-events:none;'
             });
 
             const uiVideo = this.createEl('video', {
