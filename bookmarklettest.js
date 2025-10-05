@@ -30,7 +30,7 @@
             this.draggabillyScriptUrl = 'https://unpkg.com/draggabilly@3/dist/draggabilly.pkgd.min.js';
 
             this.askEndpoint = 'https://f-ghost-insights-pressed.trycloudflare.com/ask';
-            this.assetBase = 'https://raw.githubusercontent.com/ARDARYUS/a3kbookmarklet/main/icons/';
+            this.assetBase = 'https://raw.githubusercontent.com/ARDARYUS/a3kbookmarklet/main/icons2/';
 
             // Settings keys & defaults
             this.settingsKeys = {
@@ -107,7 +107,7 @@
         getUrl(path) {
             if (!path) return '';
             if (/^https?:\/\//i.test(path)) return path;
-            if (path.indexOf('icons/') === 0) return this.assetBase + path.substring('icons/'.length);
+            if (path.indexOf('icons2/') === 0) return this.assetBase + path.substring('icons2/'.length);
             return this.assetBase + path;
         }
 
@@ -190,8 +190,8 @@
 
             const uiImg = this.createEl('img', {
                 id: 'helperEyeImg',
-                src: this.getUrl('icons/sleep.gif'),
-                dataset: { idle: this.getUrl('icons/idle.gif'), tilt: this.getUrl('icons/full.gif') },
+                src: this.getUrl('icons2/sleep.gif'),
+                dataset: { idle: this.getUrl('icons2/idle.gif'), tilt: this.getUrl('icons2/full.gif') },
                 style: 'width:100%;height:100%;object-fit:cover;display:block;pointer-events:none;'
             });
 
@@ -312,7 +312,7 @@
                 this.showUI();
                 return;
             }
-            const imageUrl = this.getUrl('icons/eyebackground.gif');
+            const imageUrl = this.getUrl('icons2/eyebackground.gif');
             const introImgElement = this.createEl('img', {
                 src: imageUrl,
                 id: 'introLoaderImage',
@@ -325,10 +325,10 @@
                 duration: 800,
                 complete: () => { try { introImgElement.remove(); } catch (e) {} this.showUI(); }
             })
-            .add({ targets: introImgElement, opacity: [0, 1], scale: [0.5, 1], rotate: '1turn', duration: 1000, easing: 'easeOutExpo' })
-            .add({ targets: introImgElement, translateY: '-=20', duration: 500, easing: 'easeInOutSine' })
-            .add({ targets: introImgElement, translateY: '+=20', duration: 500, easing: 'easeInOutSine' })
-            .add({ targets: introImgElement, opacity: 0, duration: 500, easing: 'linear' }, '+=500');
+                .add({ targets: introImgElement, opacity: [0, 1], scale: [0.5, 1], rotate: '1turn', duration: 1000, easing: 'easeOutExpo' })
+                .add({ targets: introImgElement, translateY: '-=20', duration: 500, easing: 'easeInOutSine' })
+                .add({ targets: introImgElement, translateY: '+=20', duration: 500, easing: 'easeInOutSine' })
+                .add({ targets: introImgElement, opacity: 0, duration: 500, easing: 'linear' }, '+=500');
         }
 
         showUI(skipAnimation = false) {
@@ -433,7 +433,7 @@
                 if (!img || !video) return;
                 video.style.display = 'none';
                 img.style.display = 'block';
-                img.src = this.getUrl('icons/sleep.gif');
+                img.src = this.getUrl('icons2/sleep.gif');
                 this.eyeState = 'sleep';
                 img.style.opacity = '1';
             } catch (err) {}
@@ -448,21 +448,21 @@
                 if (!img || !video) return;
                 video.style.display = 'none';
                 img.style.display = 'block';
-                img.src = this.getUrl('icons/full.gif') + '?r=' + Date.now();
+                img.src = this.getUrl('icons2/full.gif') + '?r=' + Date.now();
             } catch (err) {}
         }
 
         async handleHoverEnter() {
             if (this.eyeState === 'full') return;
             try {
-                await this.playVideoOnce(this.getUrl('icons/wakeup.webm'));
+                await this.playVideoOnce(this.getUrl('icons2/wakeup.webm'));
                 if (this.eyeState === 'full') return;
                 const img = document.getElementById('helperEyeImg');
                 const video = document.getElementById('helperEyeVideo');
                 if (!img || !video) return;
                 video.style.display = 'none';
                 img.style.display = 'block';
-                img.src = this.getUrl('icons/idle.gif') + '?r=' + Date.now();
+                img.src = this.getUrl('icons2/idle.gif') + '?r=' + Date.now();
                 this.eyeState = 'idle';
             } catch (err) {}
         }
@@ -470,7 +470,7 @@
         async handleHoverLeave() {
             if (this.eyeState === 'full') return;
             try {
-                await this.playVideoOnce(this.getUrl('icons/gotosleep.webm'));
+                await this.playVideoOnce(this.getUrl('icons2/gotosleep.webm'));
                 if (this.eyeState === 'full') return;
                 this.setEyeToSleep();
             } catch (err) {}
@@ -553,7 +553,7 @@
             if (label) label.textContent = 'work smArt-er';
             try { console.log('[AssessmentHelper] stopped'); } catch (e) {}
 
-            try { await this.playVideoOnce(this.getUrl('icons/gotosleep.webm')); } catch (e) {}
+            try { await this.playVideoOnce(this.getUrl('icons2/gotosleep.webm')); } catch (e) {}
             this.setEyeToSleep();
         }
 
@@ -967,10 +967,10 @@
                                 try { window.__AssessmentHelperInstance.stopProcessImmediate(); } catch (e) {}
                             }
                         } catch (e) {}
-                
+
                         // fade out
                         launcher.style.opacity = 0;
-                
+
                         // remove DOM nodes after fade completes, and clear global reference
                         launcher.addEventListener('transitionend', function handler() {
                             try {
@@ -1576,7 +1576,7 @@
                     this.isRunning = false;
                     const spinnerEl = document.getElementById('ah-spinner');
                     if (spinnerEl) spinnerEl.style.display = 'none';
-                    try { await this.playVideoOnce(this.getUrl('icons/gotosleep.webm')); } catch (e) {}
+                    try { await this.playVideoOnce(this.getUrl('icons2/gotosleep.webm')); } catch (e) {}
                     this.setEyeToSleep();
                     try { console.log('[AssessmentHelper] stopped'); } catch (e) {}
                     const label = document.getElementById('getAnswerButtonText');
