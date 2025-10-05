@@ -1592,4 +1592,3 @@
 
     try { new AssessmentHelper(); } catch (e) {}
 })();
-
