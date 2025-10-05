@@ -185,7 +185,7 @@
             const eyeWrapper = this.createEl('div', {
                 id: 'helperEye',
                 style:
-                    'width:150px;height:150px;margin-top:32px;border-radius:25%;display:flex;align-items:center;justify-content:center;overflow:hidden;transform-style:preserve-3d;transition:all 0.12s linear;will-change:transform,top,right,width,height;transform-origin:50% 40%;pointer-events:none;'
+                    'width:200px;height:200px;margin-top:0px;border-radius:25%;display:flex;align-items:center;justify-content:center;overflow:hidden;transform-style:preserve-3d;transition:all 0.12s linear;will-change:transform,top,right,width,height;transform-origin:50% 40%;pointer-events:none;'
             });
 
             const uiImg = this.createEl('img', {
