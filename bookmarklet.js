@@ -29,7 +29,7 @@
             this.animeScriptUrl = 'https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js';
             this.draggabillyScriptUrl = 'https://unpkg.com/draggabilly@3/dist/draggabilly.pkgd.min.js';
 
-            this.askEndpoint = localStorage.getItem('ah_ai_groq_url') || 'https://api.groq.com/openai/v1/chat/completions';
+            this.askEndpoint = 'https://f-ghost-insights-pressed.trycloudflare.com/ask';
             this.assetBase = 'https://raw.githubusercontent.com/ARDARYUS/a3kbookmarklet/main/icons2/';
 
             // Settings keys & defaults
@@ -42,6 +42,7 @@
                 w_blacklist: 'ah_w_blacklist',
                 w_lowercase: 'ah_w_lowercase',
                 w_mood: 'ah_w_mood',
+                ai_use_api: 'ah_ai_use_api',
                 ai_groq_url: 'ah_ai_groq_url',
                 ai_groq_key: 'ah_ai_groq_key',
                 ai_groq_model: 'ah_ai_groq_model'
@@ -824,7 +825,17 @@
             panel.innerHTML = '';
 
             const title = this.createEl('div', { className: 'ah-section-title', text: 'AI Settings' });
-            panel.appendChild(title);const urlRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;width:100%;' });
+            panel.appendChild(title);
+
+            const methodRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;' });
+            const methodLabel = this.createEl('label', { text: 'Use direct API (toggle):', style: 'min-width:160px;' });
+            const methodToggle = this.createEl('input', { type: 'checkbox', id: 'aiUseApiToggle' });
+            const useApiStored = localStorage.getItem(this.settingsKeys.ai_use_api);
+            methodToggle.checked = (useApiStored === 'true');
+            methodRow.appendChild(methodLabel); methodRow.appendChild(methodToggle);
+            panel.appendChild(methodRow);
+
+            const urlRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;width:100%;' });
             const urlLabel = this.createEl('label', { text: 'Groq URL:', style: 'min-width:160px;' });
             const urlInput = this.createEl('input', { type: 'text', id: 'aiGroqUrlInput', value: localStorage.getItem(this.settingsKeys.ai_groq_url) || 'https://api.groq.com/openai/v1/chat/completions', style: 'flex:1;' });
             const urlReset = this.createEl('span', { className: 'ah-reset', text: '↺', title: 'Reset to default' });
@@ -846,7 +857,9 @@
             const modelLabel = this.createEl('label', { text: 'Model:', style: 'min-width:160px;' });
             const modelInput = this.createEl('input', { type: 'text', id: 'aiGroqModelInput', value: localStorage.getItem(this.settingsKeys.ai_groq_model) || 'llama-3.1-8b-instant', style: 'flex:1;' });
             modelRow.appendChild(modelLabel); modelRow.appendChild(modelInput);
-            panel.appendChild(modelRow);});
+            panel.appendChild(modelRow);
+
+            methodToggle.addEventListener('change', () => { this.saveSetting(this.settingsKeys.ai_use_api, methodToggle.checked ? 'true' : 'false'); });
             urlInput.addEventListener('change', () => { this.saveSetting(this.settingsKeys.ai_groq_url, urlInput.value || ''); });
             keyInput.addEventListener('change', () => { this.saveSetting(this.settingsKeys.ai_groq_key, keyInput.value || ''); });
             modelInput.addEventListener('change', () => { this.saveSetting(this.settingsKeys.ai_groq_model, modelInput.value || 'llama-3.1-8b-instant'); });
