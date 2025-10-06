@@ -1,23 +1,21 @@
-// AssessmentHelper — full build (uses only user-provided GroqCloud API; removes Cloudflare endpoints)
-// - Removes Cloudflare entirely; uses user-saved API URL/key/model stored in localStorage
-// - Adds AI settings UI (URL, API key, model) saved to localStorage
-// - Properly removes DOM on close so the helper can be re-injected without page reload
-// - Keeps existing functionality (MC, writing, settings, eye animations, random MC, etc.)
+// Full AssessmentHelper — All features restored: MC, Writing, Agree/Disagree, AI settings, UI settings, no cloudflare
 (function () {
+    'use strict';
     try { console.clear(); } catch (e) {}
     console.log('[AssessmentHelper] injected');
 
-    try {
-        if (document.getElementById('Launcher')) {
-            return;
-        }
-    } catch (e) {}
+    // Prevent double-instantiation: allow re-inject after full removal
+    if (window.__AssessmentHelperInstance && window.__AssessmentHelperInstance._alive) {
+        console.log('[AssessmentHelper] instance already running');
+        return;
+    }
 
     class AssessmentHelper {
         constructor() {
-            // Expose instance globally so close handler can clean it up
+            this._alive = true;
             window.__AssessmentHelperInstance = this;
 
+            // state
             this.answerIsDragging = false;
             this.answerInitialX = 0;
             this.answerInitialY = 0;
@@ -31,31 +29,43 @@
             this.eyeState = 'sleep';
             this.currentVideo = null;
 
-            this.animeScriptUrl = 'https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js';
-            this.draggabillyScriptUrl = 'https://unpkg.com/draggabilly@3/dist/draggabilly.pkgd.min.js';
+            // Resource base for icons/gifs (user told me icons are in ARDARYUS/a3kbookmarklet/icons)
+            this.assetBase = 'https://raw.githubusercontent.com/ARDARYUS/a3kbookmarklet/main/icons/';
 
-            // settings keys & defaults
+            // Settings keys & defaults
             this.settingsKeys = {
                 mc_wait: 'ah_mc_wait_ms',
                 mc_random_pct: 'ah_mc_random_pct',
+                ai_use_api: 'ah_ai_use_api',
                 ai_url: 'ah_ai_groq_url',
                 ai_key: 'ah_ai_groq_key',
                 ai_model: 'ah_ai_groq_model',
-                ai_use_api: 'ah_ai_use_api' // still present for visibility, but we'll force api-only usage
+                // writing settings
+                w_min: 'ah_w_min_words',
+                w_max: 'ah_w_max_words',
+                w_level: 'ah_w_level',
+                w_blacklist: 'ah_w_blacklist',
+                w_lower: 'ah_w_lower',
+                w_mood: 'ah_w_mood'
             };
             this.defaults = {
                 mc_wait: 300,
                 mc_random_pct: 0,
+                ai_use_api: true,
                 ai_url: 'https://api.groq.com/openai/v1/chat/completions',
-                ai_model: 'llama-3.1-8b-instant'
+                ai_model: 'llama-3.1-8b-instant',
+                w_min: '',
+                w_max: '',
+                w_level: 'C1',
+                w_blacklist: '',
+                w_lower: false,
+                w_mood: ''
             };
 
-            // UI state for settings: 'closed' | 'menu' | 'mc' | 'writing' | 'ai'
-            this.settingsState = 'closed';
+            // UI settings state
+            this.settingsState = 'closed'; // closed | menu | mc | writing | ai
 
-            // store original eye style so we can restore after settings
-            this._eyeOriginal = null;
-
+            // start after DOM ready
             if (document.readyState === 'loading') {
                 document.addEventListener('DOMContentLoaded', () => this.init());
             } else {
@@ -63,7 +73,7 @@
             }
         }
 
-        // -------- settings storage --------
+        // ---------- storage helpers ----------
         saveSetting(key, value) {
             try { localStorage.setItem(key, String(value)); } catch (e) {}
         }
@@ -71,34 +81,35 @@
             try {
                 const v = localStorage.getItem(key);
                 if (v === null || v === undefined) return fallback;
-                // For numeric known keys, return number
-                if (key === this.settingsKeys.mc_wait || key === this.settingsKeys.mc_random_pct) {
-                    const n = Number(v);
-                    return Number.isFinite(n) ? n : fallback;
-                }
-                if (key === this.settingsKeys.ai_use_api) {
-                    return (v === 'true' || v === true);
-                }
-                return v;
+                if (typeof fallback === 'boolean') return v === 'true';
+                if (fallback === '') return v;
+                const n = Number(v);
+                return Number.isFinite(n) ? n : v;
             } catch (e) { return fallback; }
         }
+        // getters
+        getMCWait() { return Number(this.loadSetting(this.settingsKeys.mc_wait, this.defaults.mc_wait)) || this.defaults.mc_wait; }
+        getMCRandomPct() { return Number(this.loadSetting(this.settingsKeys.mc_random_pct, this.defaults.mc_random_pct)) || this.defaults.mc_random_pct; }
+        getAIUseAPI() { return this.loadSetting(this.settingsKeys.ai_use_api, this.defaults.ai_use_api); }
+        getAIUrl() { return this.loadSetting(this.settingsKeys.ai_url, this.defaults.ai_url); }
+        getAIKey() { return this.loadSetting(this.settingsKeys.ai_key, ''); }
+        getAIModel() { return this.loadSetting(this.settingsKeys.ai_model, this.defaults.ai_model); }
 
-        getMCWait() { return this.loadSetting(this.settingsKeys.mc_wait, this.defaults.mc_wait); }
-        getMCRandomPct() { return this.loadSetting(this.settingsKeys.mc_random_pct, this.defaults.mc_random_pct); }
+        getWMin() { return String(this.loadSetting(this.settingsKeys.w_min, this.defaults.w_min)); }
+        getWMax() { return String(this.loadSetting(this.settingsKeys.w_max, this.defaults.w_max)); }
+        getWLevel() { return String(this.loadSetting(this.settingsKeys.w_level, this.defaults.w_level)); }
+        getWBlacklist() { return String(this.loadSetting(this.settingsKeys.w_blacklist, this.defaults.w_blacklist)); }
+        getWLower() { return this.loadSetting(this.settingsKeys.w_lower, this.defaults.w_lower); }
+        getWMood() { return String(this.loadSetting(this.settingsKeys.w_mood, this.defaults.w_mood)); }
+
         resetMCWait() { this.saveSetting(this.settingsKeys.mc_wait, this.defaults.mc_wait); }
         resetMCRandom() { this.saveSetting(this.settingsKeys.mc_random_pct, this.defaults.mc_random_pct); }
 
-        getAIUrl() { return this.loadSetting(this.settingsKeys.ai_url, this.defaults.ai_url); }
-        getAIKey() { return this.loadSetting(this.settingsKeys.ai_key, null); }
-        getAIModel() { return this.loadSetting(this.settingsKeys.ai_model, this.defaults.ai_model); }
-        isAIUseAPI() { return this.loadSetting(this.settingsKeys.ai_use_api, true); } // default true
-
-        // -------- helpers & resources --------
+        // ---------- resource & element helpers ----------
         getUrl(path) {
             if (!path) return '';
             if (/^https?:\/\//i.test(path)) return path;
-            // default raw GitHub icons path in repo main branch
-            return 'https://raw.githubusercontent.com/ARDARYUS/a3kbookmarklet/main/icons/' + path.replace(/^icons\//, '');
+            return this.assetBase + path.replace(/^icons\//, '');
         }
 
         createEl(tag, props = {}) {
@@ -135,11 +146,12 @@
             });
         }
 
-        // -------- init / UI creation --------
+        // ---------- initialization ----------
         async init() {
             try {
-                await Promise.resolve(this.loadScript(this.animeScriptUrl)).catch(() => {});
-                await Promise.resolve(this.loadScript(this.draggabillyScriptUrl)).catch(() => {});
+                // attempt to load optional libs
+                await Promise.resolve(this.loadScript('https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js')).catch(() => {});
+                await Promise.resolve(this.loadScript('https://unpkg.com/draggabilly@3/dist/draggabilly.pkgd.min.js')).catch(() => {});
 
                 this.itemMetadata = {
                     UI: this.createUI(),
@@ -153,10 +165,11 @@
                         answerUI: this.createAnswerUI()
                     };
                     this.showUI(true);
-                } catch (e) {}
+                } catch (e) { /* fallback ignore */ }
             }
         }
 
+        // ---------- UI creation ----------
         createUI() {
             const container = this.createEl('div');
 
@@ -164,7 +177,7 @@
                 id: 'Launcher',
                 className: 'Launcher',
                 style:
-                    "min-height:160px;opacity:0;visibility:hidden;transition:opacity 0.25s ease,width 0.25s ease,font-size .12s ease;font-family:'Nunito',sans-serif;width:180px;height:240px;background:#010203;position:fixed;border-radius:12px;border:2px solid #0a0b0f;display:flex;flex-direction:column;align-items:center;color:white;font-size:16px;top:50%;left:20px;transform:translateY(-50%);z-index:99999;padding:16px;box-shadow:0 10px 8px rgba(0,0,0,0.2), 0 0 8px rgba(255,255,255,0.05);overflow:hidden;white-space:nowrap;"
+                    "min-height:160px;opacity:0;visibility:hidden;transition:opacity 0.25s ease,width 0.25s ease;font-family:'Nunito',sans-serif;width:180px;height:240px;background:#010203;position:fixed;border-radius:12px;border:2px solid #0a0b0f;display:flex;flex-direction:column;align-items:center;color:white;font-size:16px;top:50%;left:20px;transform:translateY(-50%);z-index:99999;padding:16px;box-shadow:0 10px 8px rgba(0,0,0,0.2), 0 0 8px rgba(255,255,255,0.05);overflow:hidden;white-space:nowrap;"
             });
 
             const dragHandle = this.createEl('div', {
@@ -195,29 +208,23 @@
                 preload: 'auto'
             });
 
-            // Fix: ensure getUrl resolves full path for icons
-            uiImg.src = this.getUrl('icons/sleep.gif');
-            uiImg.dataset.idle = this.getUrl('icons/idle.gif');
-            uiImg.dataset.tilt = this.getUrl('icons/full.gif');
-
-            uiVideo.src = ''; // empty initially
-
             eyeWrapper.appendChild(uiImg);
             eyeWrapper.appendChild(uiVideo);
 
             const closeButton = this.createEl('button', {
                 id: 'closeButton',
                 text: '\u00D7',
-                style: 'position:absolute;top:8px;right:8px;background:none;border:none;color:white;font-size:18px;cursor:pointer;padding:2px 8px;transition:color 0.12s ease, transform 0.1s ease;opacity:0.5;z-index:100005;'
+                style: 'position:absolute;top:8px;right:8px;background:none;border:none;color:white;font-size:18px;cursor:pointer;padding:2px 8px;transition:color 0.12s ease, transform 0.1s ease;opacity:0.7;z-index:100005'
             });
 
-            // Main action button
+            // Main action button (styled like settings)
             const getAnswerButton = this.createEl('button', {
                 id: 'getAnswerButton',
                 style:
                     'background:#151515;border:1px solid rgba(255,255,255,0.04);color:white;padding:10px 12px;border-radius:8px;cursor:pointer;margin-top:18px;width:140px;height:64px;font-size:14px;transition:background 0.14s ease, transform 0.08s ease, box-shadow 0.12s;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:6px;'
             });
 
+            // spinner element inside button
             const spinner = this.createEl('div', {
                 id: 'ah-spinner',
                 style: 'width:22px;height:22px;border-radius:50%;border:3px solid rgba(255,255,255,0.12);border-top-color:#ffffff;display:none;animation:ah-spin 0.85s cubic-bezier(.4,.0,.2,1) infinite;'
@@ -230,15 +237,15 @@
 
             const version = this.createEl('div', { id: 'ah-version', style: 'position:absolute;bottom:8px;right:8px;font-size:12px;opacity:0.9;z-index:100005', text: '1.0' });
 
-            // SETTINGS COG (bottom-left)
+            // Settings cog (bottom-left)
             const settingsCog = this.createEl('button', {
                 id: 'settingsCog',
                 title: 'Settings',
                 innerHTML: '⚙',
-                style: 'position:absolute;bottom:8px;left:8px;background:none;border:none;color:#cfcfcf;font-size:16px;cursor:pointer;opacity:0.85;padding:2px;transition:transform .12s;z-index:100005'
+                style: 'position:absolute;bottom:8px;left:8px;background:none;border:none;color:#cfcfcf;font-size:16px;cursor:pointer;opacity:0.95;padding:2px;transition:transform .12s;z-index:100005'
             });
 
-            // BACK ARROW (same spot, initially hidden)
+            // Back arrow (hidden by default)
             const settingsBack = this.createEl('button', {
                 id: 'settingsBack',
                 title: 'Back',
@@ -246,10 +253,10 @@
                 style: 'position:absolute;bottom:8px;left:8px;background:none;border:none;color:#ff4d4d;font-size:18px;cursor:pointer;opacity:0;display:none;padding:2px;transition:opacity .12s;z-index:100005'
             });
 
-            // Settings menu container (hidden by default)
+            // Settings container
             const settingsPanel = this.createEl('div', {
                 id: 'settingsPanel',
-                style: 'position:absolute;top:48px;left:12px;right:12px;bottom:48px;display:none;flex-direction:column;align-items:flex-start;gap:8px;overflow:auto;'
+                style: 'position:absolute;top:48px;left:12px;right:12px;bottom:48px;display:none;flex-direction:column;align-items:flex-start;gap:8px;overflow:auto;padding-right:8px;'
             });
 
             launcher.appendChild(dragHandle);
@@ -263,13 +270,14 @@
 
             container.appendChild(launcher);
 
-            // add spinner keyframes & minor styles + hover rules
+            // spinner keyframes and small hover rules
             this.applyStylesOnce('assessment-helper-spinner-styles', `
                 @keyframes ah-spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
                 #getAnswerButton.running { background: #1e1e1e; box-shadow: 0 4px 12px rgba(0,0,0,0.35); }
                 #getAnswerButton.running span { font-size:12px; opacity:0.95; }
-                #settingsPanel input[type="number"], #settingsPanel input[type="text"], #settingsPanel input[type="password"] { width:120px; padding:6px; border-radius:6px; border:1px solid rgba(255,255,255,0.08); background:transparent; color:white; }
-                #settingsPanel label { font-size:13px; margin-right:6px; }
+                #settingsPanel input[type="number"] { width:100px; padding:6px; border-radius:6px; border:1px solid rgba(255,255,255,0.08); background:transparent; color:white; }
+                #settingsPanel textarea, #settingsPanel input[type="text"] { width:100%; padding:6px; border-radius:6px; border:1px solid rgba(255,255,255,0.08); background:transparent; color:white; }
+                #settingsPanel label { font-size:13px; margin-right:6px; display:block; }
                 .ah-reset { cursor:pointer; margin-left:8px; opacity:0.8; font-size:14px; user-select:none; }
                 .ah-section-title { font-weight:700; margin-top:4px; margin-bottom:6px; font-size:14px; }
                 #settingsPanel button { transition: background 0.12s ease, transform 0.08s ease; }
@@ -287,12 +295,12 @@
                 id: 'answerContainer',
                 className: 'answerLauncher',
                 style:
-                    "outline:none;min-height:60px;transform:translateX(0px) translateY(-50%);opacity:0;visibility:hidden;transition:opacity 0.3s ease, transform 0.3s ease;font-family:'Nunito',sans-serif;width:60px;height:60px;background:#1c1e2b;position:fixed;border-radius:8px;display:flex;justify-content:center;align-items:center;color:white;font-size:24px;top:50%;right:220px;z-index:99998;padding:8px;box-shadow:0 4px 8px rgba(0,0,0,0.2);overflow:hidden;white-space:normal;"
+                    "outline:none;min-height:60px;transform:translateX(0px) translateY(-50%);opacity:0;visibility:hidden;transition:opacity 0.3s ease, transform 0.3s ease;font-family:'Nunito',sans-serif;width:60px;height:60px;background:#1c1e2b;position:fixed;border-radius:8px;display:flex;justify-content:center;align-items:center;color:white;font-size:24px;top:50%;left:220px;z-index:99998;padding:8px;box-shadow:0 4px 8px rgba(0,0,0,0.2);overflow:hidden;white-space:normal;display:none;"
             });
 
             const dragHandle = this.createEl('div', { className: 'answer-drag-handle', style: 'width:100%;height:24px;cursor:move;background:transparent;position:absolute;top:0;' });
             const closeButton = this.createEl('button', { id: 'closeAnswerButton', style: 'position:absolute;top:8px;right:8px;background:none;border:none;color:white;font-size:18px;cursor:pointer;padding:2px 8px;transition:color 0.2s ease, transform 0.1s ease;' });
-            const answerContent = this.createEl('div', { id: 'answerContent', style: 'padding:0;margin:0;word-wrap:break-word;font-size:24px;font-weight:bold;display:flex;justify-content:center;align-items:center;width:100%;height:100%;' });
+            const answerContent = this.createEl('div', { id: 'answerContent', style: 'padding:0;margin:0;word-wrap:break-word;font-size:18px;font-weight:bold;display:flex;justify-content:center;align-items:center;width:100%;height:100%;' });
 
             answerContainer.appendChild(dragHandle);
             answerContainer.appendChild(closeButton);
@@ -301,13 +309,13 @@
             return container;
         }
 
-        // -------- intro & show UI --------
+        // ---------- intro & show ----------
         playIntroAnimation() {
             if (typeof anime === 'undefined') {
                 this.showUI();
                 return;
             }
-            const imageUrl = this.getUrl('icons/eyebackground.gif');
+            const imageUrl = this.getUrl('eyebackground.gif');
             const introImgElement = this.createEl('img', {
                 src: imageUrl,
                 id: 'introLoaderImage',
@@ -351,7 +359,7 @@
             setTimeout(() => { alertContainer.style.opacity = 0; alertContainer.addEventListener('transitionend', () => alertContainer.remove()); }, 5000);
         }
 
-        // -------- fetch article / answer (API-only; no Cloudflare) --------
+        // ---------- article fetch ----------
         async fetchArticleContent() {
             try {
                 const articleContainer = document.querySelector('#start-reading');
@@ -382,85 +390,77 @@
             }
         }
 
-        // Use only user API (Groq/OpenAI-compatible chat completions). Cloudflare endpoints removed.
+        // ---------- AI call (only user API) ----------
         async fetchAnswer(queryContent, retryCount = 0) {
-            const MAX_RETRIES = 3, RETRY_DELAY_MS = 1000;
+            const MAX_RETRIES = 2;
+            const RETRY_DELAY_MS = 1000;
             try {
-                // Abort previous
+                // Validate API settings
+                const useApi = this.getAIUseAPI();
+                const url = this.getAIUrl();
+                const key = this.getAIKey();
+                const model = this.getAIModel() || this.defaults.ai_model;
+
+                if (!useApi || !url || !key) {
+                    const msg = 'AI API not configured. Enable "Use API" and provide URL/key in AI settings.';
+                    console.warn('[AssessmentHelper] fetchAnswer aborted:', msg);
+                    return `Error: ${msg}`;
+                }
+
+                // abort previous if any
                 if (this.currentAbortController) {
                     try { this.currentAbortController.abort(); } catch (e) {}
                 }
                 this.currentAbortController = new AbortController();
                 const signal = this.currentAbortController.signal;
 
-                // Get API settings
-                const apiKey = this.getAIKey();
-                const apiUrl = this.getAIUrl();
-                const model = this.getAIModel();
-
-                if (!apiKey) {
-                    throw new Error('No API key configured. Open Settings → AI settings and paste your GroqCloud API key.');
-                }
-                if (!apiUrl) {
-                    throw new Error('No API URL configured. Open Settings → AI settings and set the API URL.');
-                }
-
-                // Chat-completion payload (OpenAI-compatible)
-                const body = {
+                // Build payload — attempt chat completions structure
+                const body = JSON.stringify({
                     model: model,
-                    messages: [{ role: 'user', content: queryContent }],
-                    // allow user to modify model behavior if needed; keep defaults modest
-                    max_tokens: 1500,
-                    temperature: 0.0
-                };
+                    messages: [{ role: 'user', content: queryContent }]
+                });
 
-                const resp = await fetch(apiUrl, {
+                const resp = await fetch(url, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'Authorization': 'Bearer ' + apiKey
+                        'Authorization': 'Bearer ' + key
                     },
-                    body: JSON.stringify(body),
+                    body,
                     signal
                 });
 
                 this.currentAbortController = null;
 
                 if (!resp.ok) {
-                    const txt = await resp.text().catch(()=>'');
-                    if (resp.status === 429 && retryCount < MAX_RETRIES) {
+                    const text = await resp.text().catch(() => '');
+                    if (resp.status >= 500 && retryCount < MAX_RETRIES) {
                         await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
                         return this.fetchAnswer(queryContent, retryCount + 1);
                     }
-                    throw new Error(`API error ${resp.status}: ${txt}`);
+                    throw new Error(`API error ${resp.status}: ${text}`);
                 }
 
-                const data = await resp.json().catch(()=>null);
-
-                // Support multiple possible shapes:
-                // - { response: '...' } (legacy)
-                // - { answer: '...' }
-                // - OpenAI-style: { choices: [{ message: { content: '...' } }] } or { choices: [{ text: '...' }] }
-                let text = null;
-                if (!data) text = null;
-                else if (data.response) text = data.response;
-                else if (data.answer) text = data.answer;
-                else if (Array.isArray(data.choices) && data.choices.length) {
-                    const c = data.choices[0];
-                    if (c.message && (c.message.content || c.message.content === '')) text = c.message.content;
-                    else if (c.text || c.text === '') text = c.text;
-                    else if (c.delta && c.delta.content) text = c.delta.content;
-                } else if (data.choices && data.choices.text) text = data.choices.text;
-
-                if (text === null || text === undefined) return 'No answer available';
-                return String(text).trim();
+                const data = await resp.json().catch(() => null);
+                // Try to extract response in common shapes
+                // groq/openai-like: data.choices[0].message.content or data.choices[0].text or data.response
+                if (data) {
+                    if (data.choices && data.choices[0]) {
+                        const ch = data.choices[0];
+                        const msg = (ch.message && ch.message.content) || ch.text || ch.delta && ch.delta.content;
+                        if (msg) return String(msg).trim();
+                    }
+                    if (data.response) return String(data.response).trim();
+                    if (data.answer) return String(data.answer).trim();
+                }
+                return 'No answer available';
             } catch (err) {
                 if (err && err.name === 'AbortError') return '<<ABORTED>>';
                 return `Error: ${err && err.message ? err.message : String(err)}`;
             }
         }
 
-        // -------- Eye helpers (unchanged) --------
+        // ---------- Eye helpers ----------
         setEyeToSleep() {
             if (this.eyeState === 'full') return;
             try {
@@ -470,7 +470,7 @@
                 if (!img || !video) return;
                 video.style.display = 'none';
                 img.style.display = 'block';
-                img.src = this.getUrl('icons/sleep.gif');
+                img.src = this.getUrl('sleep.gif');
                 this.eyeState = 'sleep';
                 img.style.opacity = '1';
             } catch (err) {}
@@ -485,21 +485,21 @@
                 if (!img || !video) return;
                 video.style.display = 'none';
                 img.style.display = 'block';
-                img.src = this.getUrl('icons/full.gif') + '?r=' + Date.now();
+                img.src = this.getUrl('full.gif') + '?r=' + Date.now();
             } catch (err) {}
         }
 
         async handleHoverEnter() {
             if (this.eyeState === 'full') return;
             try {
-                await this.playVideoOnce(this.getUrl('icons/wakeup.webm'));
+                await this.playVideoOnce(this.getUrl('wakeup.webm'));
                 if (this.eyeState === 'full') return;
                 const img = document.getElementById('helperEyeImg');
                 const video = document.getElementById('helperEyeVideo');
                 if (!img || !video) return;
                 video.style.display = 'none';
                 img.style.display = 'block';
-                img.src = this.getUrl('icons/idle.gif') + '?r=' + Date.now();
+                img.src = this.getUrl('idle.gif') + '?r=' + Date.now();
                 this.eyeState = 'idle';
             } catch (err) {}
         }
@@ -507,7 +507,7 @@
         async handleHoverLeave() {
             if (this.eyeState === 'full') return;
             try {
-                await this.playVideoOnce(this.getUrl('icons/gotosleep.webm'));
+                await this.playVideoOnce(this.getUrl('gotosleep.webm'));
                 if (this.eyeState === 'full') return;
                 this.setEyeToSleep();
             } catch (err) {}
@@ -570,7 +570,7 @@
             } catch (err) {}
         }
 
-        // -------- UI start/stop --------
+        // ---------- UI start/stop ----------
         async startProcessUI() {
             const btn = document.getElementById('getAnswerButton');
             const spinner = document.getElementById('ah-spinner');
@@ -590,7 +590,7 @@
             if (label) label.textContent = 'work smArt-er';
             try { console.log('[AssessmentHelper] stopped'); } catch (e) {}
 
-            try { await this.playVideoOnce(this.getUrl('icons/gotosleep.webm')); } catch (e) {}
+            try { await this.playVideoOnce(this.getUrl('gotosleep.webm')); } catch (e) {}
             this.setEyeToSleep();
         }
 
@@ -602,14 +602,13 @@
             }
         }
 
-        // -------- Settings & UI interactions (adds AI settings) --------
+        // ---------- settings UI building ----------
         _computeExpandRight() {
             const launcher = document.getElementById('Launcher');
             if (!launcher) return true;
             const rect = launcher.getBoundingClientRect();
             const distanceToLeft = rect.left;
             const distanceToRight = window.innerWidth - rect.right;
-            // If closer to left edge, expand right; otherwise expand left.
             return distanceToLeft <= distanceToRight;
         }
 
@@ -618,12 +617,10 @@
             if (!launcher) return;
             const rect = launcher.getBoundingClientRect();
             if (expandRight) {
-                // fix left and expand right
                 launcher.style.left = `${rect.left}px`;
                 launcher.style.right = 'auto';
                 launcher.style.width = `${widthPx}px`;
             } else {
-                // fix right and expand left
                 const rightCss = Math.round(window.innerWidth - rect.right);
                 launcher.style.right = `${rightCss}px`;
                 launcher.style.left = 'auto';
@@ -637,6 +634,7 @@
             if (!this._eyeOriginal) {
                 this._eyeOriginal = {
                     style: eye.getAttribute('style') || '',
+                    parentDisplay: eye.style.display || ''
                 };
             }
             eye.style.display = 'flex';
@@ -710,20 +708,16 @@
             if (!launcher) return;
             const btn = document.getElementById('getAnswerButton');
 
-            // compute direction and set width to menu-size
             const expandRight = this._computeExpandRight();
             this._setLauncherWidthAndAnchor(360, expandRight);
 
-            // shrink eye but keep visible at top-right
             this._shrinkEyeToTopRight();
 
-            // fade out main items except version & close & cog/back
             if (btn) { btn.style.transition = 'opacity 0.12s'; btn.style.opacity = '0'; setTimeout(()=>btn.style.display='none',140); }
 
             const panel = document.getElementById('settingsPanel');
             if (panel) { panel.style.display = 'flex'; panel.style.opacity = '1'; }
 
-            // replace cog with back arrow
             const settingsCog = document.getElementById('settingsCog');
             const settingsBack = document.getElementById('settingsBack');
             if (settingsCog) settingsCog.style.display = 'none';
@@ -745,7 +739,7 @@
             panel.appendChild(title);
 
             const waitRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;' });
-            const waitLabel = this.createEl('label', { text: 'Wait time (ms):', style: 'min-width:120px;' });
+            const waitLabel = this.createEl('label', { text: 'Wait time (ms):', style: 'min-width:140px;' });
             const waitInput = this.createEl('input', { type: 'number', id: 'mcWaitInput', value: String(this.getMCWait()), style: '' });
             const waitReset = this.createEl('span', { className: 'ah-reset', text: '↺', title: 'Reset to default' });
             waitReset.addEventListener('click', () => { this.resetMCWait(); waitInput.value = String(this.getMCWait()); });
@@ -755,7 +749,7 @@
             panel.appendChild(waitRow);
 
             const probRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;' });
-            const probLabel = this.createEl('label', { text: 'Random answer %:', style: 'min-width:120px;' });
+            const probLabel = this.createEl('label', { text: 'Random answer %:', style: 'min-width:140px;' });
             const probInput = this.createEl('input', { type: 'number', id: 'mcRandomInput', value: String(this.getMCRandomPct()), min:0, max:100 });
             const probReset = this.createEl('span', { className: 'ah-reset', text: '↺', title: 'Reset to default' });
             probReset.addEventListener('click', () => { this.resetMCRandom(); probInput.value = String(this.getMCRandomPct()); });
@@ -785,8 +779,71 @@
             const title = this.createEl('div', { className: 'ah-section-title', text: 'Writing Settings' });
             panel.appendChild(title);
 
-            const placeholder = this.createEl('div', { text: 'No settings available yet for writing. This area is reserved.', style: 'font-size:13px;opacity:0.85;margin-top:6px;' });
-            panel.appendChild(placeholder);
+            // min words
+            const minRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;' });
+            const minLabel = this.createEl('label', { text: 'Minimum words:', style: 'min-width:140px;' });
+            const minInput = this.createEl('input', { type: 'number', id: 'wMinInput', value: String(this.getWMin()) });
+            const minReset = this.createEl('span', { className: 'ah-reset', text: '↺', title: 'Reset' });
+            minReset.addEventListener('click', () => { this.saveSetting(this.settingsKeys.w_min, ''); minInput.value = ''; });
+            minInput.addEventListener('change', () => { this.saveSetting(this.settingsKeys.w_min, minInput.value.trim()); });
+
+            minRow.appendChild(minLabel); minRow.appendChild(minInput); minRow.appendChild(minReset);
+            panel.appendChild(minRow);
+
+            // max words
+            const maxRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;' });
+            const maxLabel = this.createEl('label', { text: 'Maximum words:', style: 'min-width:140px;' });
+            const maxInput = this.createEl('input', { type: 'number', id: 'wMaxInput', value: String(this.getWMax()) });
+            const maxReset = this.createEl('span', { className: 'ah-reset', text: '↺', title: 'Reset' });
+            maxReset.addEventListener('click', () => { this.saveSetting(this.settingsKeys.w_max, ''); maxInput.value = ''; });
+            maxInput.addEventListener('change', () => { this.saveSetting(this.settingsKeys.w_max, maxInput.value.trim()); });
+
+            maxRow.appendChild(maxLabel); maxRow.appendChild(maxInput); maxRow.appendChild(maxReset);
+            panel.appendChild(maxRow);
+
+            // english level dropdown
+            const levelRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;' });
+            const levelLabel = this.createEl('label', { text: 'English level:', style: 'min-width:140px;' });
+            const levelSelect = this.createEl('select', { id: 'wLevelSelect' });
+            ['A1','A2','B1','B2','C1','C2'].forEach(l => {
+                const opt = document.createElement('option');
+                opt.value = l;
+                opt.text = l;
+                if (l === this.getWLevel()) opt.selected = true;
+                levelSelect.appendChild(opt);
+            });
+            levelSelect.addEventListener('change', () => this.saveSetting(this.settingsKeys.w_level, levelSelect.value));
+
+            levelRow.appendChild(levelLabel); levelRow.appendChild(levelSelect);
+            panel.appendChild(levelRow);
+
+            // blacklist characters
+            const blackRow = this.createEl('div', { style: 'display:flex;flex-direction:column;gap:6px;margin-bottom:8px;width:100%;' });
+            const blackLabel = this.createEl('label', { text: 'Blacklist characters (remove from AI output):', style: 'min-width:140px;' });
+            const blackInput = this.createEl('input', { type: 'text', id: 'wBlacklist', value: this.getWBlacklist() });
+            blackInput.addEventListener('change', () => this.saveSetting(this.settingsKeys.w_blacklist, blackInput.value || ''));
+            blackRow.appendChild(blackLabel); blackRow.appendChild(blackInput);
+            panel.appendChild(blackRow);
+
+            // lowercase checkbox
+            const lowerRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;' });
+            const lowerLabel = this.createEl('label', { text: 'Only lowercase output:', style: 'min-width:140px;' });
+            const lowerInput = this.createEl('input', { type: 'checkbox', id: 'wLower' });
+            lowerInput.checked = this.getWLower();
+            lowerInput.addEventListener('change', () => this.saveSetting(this.settingsKeys.w_lower, lowerInput.checked));
+            lowerRow.appendChild(lowerLabel); lowerRow.appendChild(lowerInput);
+            panel.appendChild(lowerRow);
+
+            // mood / style box
+            const moodRow = this.createEl('div', { style: 'display:flex;flex-direction:column;gap:6px;margin-bottom:8px;width:100%;' });
+            const moodLabel = this.createEl('label', { text: 'Writing style / mood (appended to prompt):', style: 'min-width:140px;' });
+            const moodInput = this.createEl('textarea', { id: 'wMood', rows: 3, text: this.getWMood() });
+            moodInput.addEventListener('change', () => this.saveSetting(this.settingsKeys.w_mood, moodInput.value || ''));
+            moodRow.appendChild(moodLabel); moodRow.appendChild(moodInput);
+            panel.appendChild(moodRow);
+
+            const note = this.createEl('div', { text: 'Settings are stored locally in your browser and applied client-side to AI output.', style: 'font-size:12px;opacity:0.8;margin-top:6px;' });
+            panel.appendChild(note);
         }
 
         openAISettings() {
@@ -800,49 +857,40 @@
             const title = this.createEl('div', { className: 'ah-section-title', text: 'AI Settings' });
             panel.appendChild(title);
 
-            // API URL
-            const urlRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;' });
-            const urlLabel = this.createEl('label', { text: 'API URL:', style: 'min-width:120px;' });
-            const urlInput = this.createEl('input', { type: 'text', id: 'aiUrlInput', value: String(this.getAIUrl()), style: 'width:300px;' });
-            const urlReset = this.createEl('span', { className: 'ah-reset', text: '↺', title: 'Reset to default' });
-            urlReset.addEventListener('click', () => { this.saveSetting(this.settingsKeys.ai_url, this.defaults.ai_url); urlInput.value = this.defaults.ai_url; });
+            // Use API toggle
+            const useRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;' });
+            const useLabel = this.createEl('label', { text: 'Use API method (must set URL & key):', style: 'min-width:140px;' });
+            const useInput = this.createEl('input', { type: 'checkbox', id: 'aiUseApi' });
+            useInput.checked = this.getAIUseAPI();
+            useInput.addEventListener('change', () => this.saveSetting(this.settingsKeys.ai_use_api, useInput.checked));
+            useRow.appendChild(useLabel); useRow.appendChild(useInput);
+            panel.appendChild(useRow);
 
-            urlRow.appendChild(urlLabel); urlRow.appendChild(urlInput); urlRow.appendChild(urlReset);
+            // URL input (saved)
+            const urlRow = this.createEl('div', { style: 'display:flex;flex-direction:column;gap:6px;margin-bottom:8px;width:100%;' });
+            const urlLabel = this.createEl('label', { text: 'API URL:', style: 'min-width:140px;' });
+            const urlInput = this.createEl('input', { type: 'text', id: 'aiUrl', value: this.getAIUrl() });
+            urlInput.addEventListener('change', () => this.saveSetting(this.settingsKeys.ai_url, urlInput.value.trim()));
+            urlRow.appendChild(urlLabel); urlRow.appendChild(urlInput);
             panel.appendChild(urlRow);
 
-            // API Key
-            const keyRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;' });
-            const keyLabel = this.createEl('label', { text: 'API Key:', style: 'min-width:120px;' });
-            const keyInput = this.createEl('input', { type: 'password', id: 'aiKeyInput', value: String(this.getAIKey() || ''), style: 'width:300px;' });
-            const keyClear = this.createEl('span', { className: 'ah-reset', text: '✖', title: 'Clear key' });
-            keyClear.addEventListener('click', () => { this.saveSetting(this.settingsKeys.ai_key, ''); keyInput.value = ''; });
-
-            keyRow.appendChild(keyLabel); keyRow.appendChild(keyInput); keyRow.appendChild(keyClear);
+            // Key input (sensitive, stored locally)
+            const keyRow = this.createEl('div', { style: 'display:flex;flex-direction:column;gap:6px;margin-bottom:8px;width:100%;' });
+            const keyLabel = this.createEl('label', { text: 'API Key (stored locally):', style: 'min-width:140px;' });
+            const keyInput = this.createEl('input', { type: 'text', id: 'aiKey', value: this.getAIKey() });
+            keyInput.addEventListener('change', () => this.saveSetting(this.settingsKeys.ai_key, keyInput.value.trim()));
+            keyRow.appendChild(keyLabel); keyRow.appendChild(keyInput);
             panel.appendChild(keyRow);
 
-            // Model
+            // Model input
             const modelRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;' });
-            const modelLabel = this.createEl('label', { text: 'Model:', style: 'min-width:120px;' });
-            const modelInput = this.createEl('input', { type: 'text', id: 'aiModelInput', value: String(this.getAIModel()), style: 'width:200px;' });
-            const modelReset = this.createEl('span', { className: 'ah-reset', text: '↺', title: 'Reset to default' });
-            modelReset.addEventListener('click', () => { this.saveSetting(this.settingsKeys.ai_model, this.defaults.ai_model); modelInput.value = this.defaults.ai_model; });
-
-            modelRow.appendChild(modelLabel); modelRow.appendChild(modelInput); modelRow.appendChild(modelReset);
+            const modelLabel = this.createEl('label', { text: 'Model:', style: 'min-width:140px;' });
+            const modelInput = this.createEl('input', { type: 'text', id: 'aiModel', value: this.getAIModel() });
+            modelInput.addEventListener('change', () => this.saveSetting(this.settingsKeys.ai_model, modelInput.value.trim()));
+            modelRow.appendChild(modelLabel); modelRow.appendChild(modelInput);
             panel.appendChild(modelRow);
 
-            // Save button
-            const saveBtn = this.createEl('button', { text: 'Save AI settings', style: 'padding:8px 12px;border-radius:8px;background:#1a1a1a;border:1px solid rgba(255,255,255,0.06);color:white;cursor:pointer;margin-top:8px;' });
-            saveBtn.addEventListener('click', () => {
-                this.saveSetting(this.settingsKeys.ai_url, urlInput.value || this.defaults.ai_url);
-                this.saveSetting(this.settingsKeys.ai_key, keyInput.value || '');
-                this.saveSetting(this.settingsKeys.ai_model, modelInput.value || this.defaults.ai_model);
-                // ensure flag for api usage set
-                this.saveSetting(this.settingsKeys.ai_use_api, true);
-                this.showAlert('AI settings saved locally (stored in browser).', 'info');
-            });
-            panel.appendChild(saveBtn);
-
-            const note = this.createEl('div', { text: 'This tool uses your API key locally in the browser. Do not share your key.', style: 'font-size:12px;opacity:0.8;margin-top:8px;' });
+            const note = this.createEl('div', { text: 'Default mode: API method using your URL/key. Keep these safe.', style: 'font-size:12px;opacity:0.85;margin-top:6px;' });
             panel.appendChild(note);
         }
 
@@ -865,22 +913,22 @@
             if (this.settingsState === 'menu') {
                 // hide panel
                 if (settingsPanel) { settingsPanel.style.display = 'none'; settingsPanel.innerHTML = ''; }
-                // restore main button (fade-in)
-                if (btn) { btn.style.display = 'flex'; btn.style.opacity = '0'; setTimeout(()=>btn.style.opacity='1',10); }
+                // restore main button with fade
+                if (btn) { btn.style.display = 'flex'; setTimeout(()=>btn.style.opacity='1',10); }
                 // restore cog/back
                 if (settingsBack) { settingsBack.style.opacity = '0'; setTimeout(()=>settingsBack.style.display='none',120); }
                 if (settingsCog) settingsCog.style.display = 'block';
-                // shrink launcher back
+                // shrink launcher back to default 180
                 const expandRight = this._computeExpandRight();
                 this._setLauncherWidthAndAnchor(180, expandRight);
-                // restore eye full size & original placement
+                // restore eye
                 this._restoreEyeFromShrink();
                 this.settingsState = 'closed';
                 return;
             }
         }
 
-        // -------- event wiring & behavior --------
+        // ---------- event wiring & behavior ----------
         setupEventListeners() {
             try {
                 const launcher = document.getElementById('Launcher');
@@ -898,7 +946,7 @@
                     #getAnswerButton:hover { background: #1f1f1f !important; }
                     #getAnswerButton:active { background: #4c4e5b !important; transform: scale(0.98); }
                     #getAnswerButton:disabled { opacity: 0.6; cursor: not-allowed; }
-                    .answerLauncher.show { opacity: 1; visibility: visible; transform: translateY(-50%) scale(1); }
+                    .answerLauncher.show { opacity: 1; visibility: visible; transform: translateY(-50%) scale(1); display:flex !important; }
                 `);
 
                 if (typeof Draggabilly !== 'undefined') {
@@ -934,36 +982,18 @@
                 document.addEventListener('mouseup', stopDrag);
                 document.addEventListener('mouseleave', stopDrag);
 
-                // CLEAN closeButton: stop process, abort, remove DOM so re-injection works
+                // CLOSE: remove DOM & clear singleton so re-inject works
                 if (closeButton) {
                     closeButton.addEventListener('click', () => {
                         try {
-                            if (window.__AssessmentHelperInstance && typeof window.__AssessmentHelperInstance.stopProcessImmediate === 'function') {
-                                try { window.__AssessmentHelperInstance.stopProcessImmediate(); } catch (e) {}
-                            }
+                            const launcherEl = document.getElementById('Launcher');
+                            if (launcherEl && launcherEl.parentNode) launcherEl.parentNode.removeChild(launcherEl);
+                            const answerWrap = document.querySelector('#answerContainer') && document.querySelector('#answerContainer').parentNode;
+                            if (answerWrap && answerWrap.parentNode) answerWrap.parentNode.removeChild(answerWrap);
                         } catch (e) {}
-
-                        // fade out
-                        launcher.style.opacity = 0;
-
-                        // remove DOM nodes after fade completes, clean up
-                        const tidy = () => {
-                            try {
-                                const launcherEl = document.getElementById('Launcher');
-                                if (launcherEl && launcherEl.parentElement) launcherEl.parentElement.remove();
-
-                                const answerEl = document.getElementById('answerContainer');
-                                if (answerEl && answerEl.parentElement) answerEl.parentElement.remove();
-                            } catch (e) {}
-                            try { window.__AssessmentHelperInstance = null; } catch (e) {}
-                        };
-
-                        // If transitionend supported
-                        const onEnd = () => { tidy(); launcher.removeEventListener('transitionend', onEnd); };
-                        launcher.addEventListener('transitionend', onEnd, { once: true });
-
-                        // safety fallback: remove after 600ms
-                        setTimeout(() => { try { tidy(); } catch (e) {} }, 700);
+                        // clear instance
+                        try { window.__AssessmentHelperInstance = null; } catch (e) {}
+                        this._alive = false;
                     });
                     closeButton.addEventListener('mousedown', () => (closeButton.style.transform = 'scale(0.95)'));
                     closeButton.addEventListener('mouseup', () => (closeButton.style.transform = 'scale(1)'));
@@ -974,12 +1004,14 @@
                         answerContainer.style.opacity = 0;
                         answerContainer.style.transform = 'translateY(-50%) scale(0.8)';
                         answerContainer.addEventListener('transitionend', function handler() {
-                            if (parseFloat(answerContainer.style.opacity) === 0) {
-                                answerContainer.style.display = 'none';
-                                answerContainer.style.visibility = 'hidden';
-                                answerContainer.style.transform = 'translateY(-50%) scale(1)';
-                                answerContainer.removeEventListener('transitionend', handler);
-                            }
+                            try {
+                                if (parseFloat(answerContainer.style.opacity) === 0) {
+                                    answerContainer.style.display = 'none';
+                                    answerContainer.style.visibility = 'hidden';
+                                    answerContainer.style.transform = 'translateY(-50%) scale(1)';
+                                }
+                            } catch (e) {}
+                            try { answerContainer.removeEventListener('transitionend', handler); } catch (e) {}
                         }, { once: true });
                     });
                     closeAnswerButton.addEventListener('mousedown', () => (closeAnswerButton.style.transform = 'scale(0.95)'));
@@ -994,6 +1026,11 @@
                 // Toggle start/stop
                 getAnswerButton.addEventListener('click', async () => {
                     if (!this.isRunning) {
+                        // Validate API configured
+                        if (!this.getAIUseAPI() || !this.getAIUrl() || !this.getAIKey()) {
+                            this.showAlert('AI not configured. Open AI Settings and provide URL & Key.', 'error');
+                            return;
+                        }
                         this.isRunning = true;
                         this._stoppedByWrite = false;
                         await this.startProcessUI();
@@ -1005,79 +1042,257 @@
                     }
                 });
 
-                // Settings cog/back wiring
+                // Settings wiring
                 const settingsCog = document.getElementById('settingsCog');
                 const settingsBack = document.getElementById('settingsBack');
                 if (settingsCog) settingsCog.addEventListener('click', (e) => { e.preventDefault(); this.openSettingsMenu(); });
                 if (settingsBack) settingsBack.addEventListener('click', (e) => { e.preventDefault(); this.backFromSettings(); });
 
-            } catch (e) {}
+            } catch (e) {
+                console.error('[AssessmentHelper] setupEventListeners error', e);
+            }
         }
 
-        // -------- solver loop (uses settings & random MC) --------
+        // ---------- utilities for writing postprocess ----------
+        applyWritingPostProcess(text) {
+            let out = String(text || '');
+
+            // blacklist characters: remove all occurrences
+            const blacklist = this.getWBlacklist() || '';
+            if (blacklist && blacklist.length > 0) {
+                // treat as literal characters to remove
+                const uniqueChars = Array.from(new Set(blacklist.split('')));
+                const regex = new RegExp('[' + uniqueChars.map(c => {
+                    // escape regexp special
+                    return c.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
+                }).join('') + ']', 'g');
+                out = out.replace(regex, '');
+            }
+
+            // lowercase if requested
+            if (this.getWLower()) {
+                out = out.toLowerCase();
+            }
+
+            return out;
+        }
+
+        buildWritingPromptSuffix() {
+            const parts = [];
+            const min = String(this.getWMin()).trim();
+            const max = String(this.getWMax()).trim();
+            if (min) parts.push(`Use minimum ${min} words.`);
+            if (max) parts.push(`Use maximum ${max} words.`);
+            const level = String(this.getWLevel()).trim();
+            if (level) parts.push(`Use English level ${level} (CEFR).`);
+            const mood = String(this.getWMood()).trim();
+            if (mood) parts.push(mood);
+            if (parts.length > 0) return parts.join(' ');
+            return '';
+        }
+
+        // ---------- special Ready/Reflect handling ----------
+        _isReadyOrReflectUrl() {
+            const href = location.href || '';
+            return href.includes('lesson/ready') || href.includes('lesson/reflect');
+        }
+
+        _readReadyReflectQuestion() {
+            try {
+                const xpath = '//*[@id="before-reading-poll"]/div[1]/p[2]/div/text()';
+                const result = document.evaluate(xpath, document, null, XPathResult.STRING_TYPE, null);
+                return result && result.stringValue ? result.stringValue.trim() : '';
+            } catch (e) { return ''; }
+        }
+
+        _getReadyReflectRadioInputs() {
+            try {
+                const agreeXPath = '//*[@id="before-reading-poll"]/div[1]/fieldset/div/label[1]/span[1]/input';
+                const disagreeXPath = '//*[@id="before-reading-poll"]/div[1]/fieldset/div/label[2]/span[1]/input';
+                const agreeNode = document.evaluate(agreeXPath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+                const disagreeNode = document.evaluate(disagreeXPath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+                return { agree: agreeNode || null, disagree: disagreeNode || null };
+            } catch (e) { return { agree: null, disagree: null }; }
+        }
+
+        // ---------- solver loop ----------
         async runSolverLoop() {
             const attemptOnce = async (excludedAnswers = []) => {
                 if (!this.isRunning) return false;
                 try {
                     let queryContent = await this.fetchArticleContent();
 
-                    // Detect writing target: prefer TinyMCE iframe, then textarea, then contenteditable
-                    const tinyIframe = document.querySelector('.tox-edit-area__iframe');
-                    const plainTextarea = document.querySelector('textarea');
-                    const contentEditable = document.querySelector('[contenteditable="true"]');
+                    // special ready/reflect flow
+                    if (this._isReadyOrReflectUrl()) {
+                        const questionText = this._readReadyReflectQuestion();
+                        const radios = this._getReadyReflectRadioInputs();
+                        const tinyIframe = document.querySelector('.tox-edit-area__iframe');
+                        const plainTextarea = document.querySelector('textarea');
+                        const contentEditable = document.querySelector('[contenteditable="true"]');
+                        const writingTarget = tinyIframe || plainTextarea || contentEditable || null;
 
-                    const writingTarget = tinyIframe || plainTextarea || contentEditable || null;
+                        // prepare prompt for agree/disagree decision
+                        let prompt = `${queryContent}\n\nQuestion: ${questionText}\n\nIs the student likely to AGREE or DISAGREE with the statement? Provide just the single word "AGREE" or "DISAGREE". Then write a short reason in one paragraph.`;
+                        const suffix = this.buildWritingPromptSuffix();
+                        if (suffix) prompt += '\n\n' + suffix;
 
-                    if (writingTarget) {
-                        queryContent += "\n\nPlease provide a detailed written answer based on the above article and question.";
-
+                        // Log what we sent (expandable)
                         try {
-                            console.groupCollapsed('[AssessmentHelper] Sent (writing) payload');
-                            console.log('q:', queryContent);
-                            console.log('article:', this.cachedArticle || null);
+                            console.groupCollapsed('[AssessmentHelper] Sent (Ready/Reflect) payload');
+                            console.log({ q: prompt, article: this.cachedArticle || null });
                             console.groupEnd();
                         } catch (e) {}
 
+                        const aiReply = await this.fetchAnswer(prompt);
                         try {
-                            console.groupCollapsed('[AssessmentHelper] Writing target');
-                            if (tinyIframe) console.log('target: TinyMCE iframe', tinyIframe);
-                            else if (plainTextarea) console.log('target: textarea', plainTextarea);
-                            else if (contentEditable) console.log('target: contenteditable', contentEditable);
-                            console.groupEnd();
-                        } catch (e) {}
-
-                        const answerText = await this.fetchAnswer(queryContent);
-
-                        try {
-                            console.groupCollapsed('[AssessmentHelper] Received (writing) answer');
-                            console.log(answerText);
+                            console.groupCollapsed('[AssessmentHelper] Received (Ready/Reflect) answer');
+                            console.log({ raw: aiReply });
                             console.groupEnd();
                         } catch (e) {}
 
                         if (!this.isRunning) return false;
 
+                        // Interpret reply: check starts with AGREE/DISAGREE
+                        const normalized = String(aiReply || '').trim();
+                        const firstToken = normalized.split(/\s+/)[0].toUpperCase();
+                        const chosen = (firstToken === 'AGREE' || firstToken === 'DISAGREE') ? firstToken : null;
+
+                        // If radio exists, click it then write reason in tiny iframe if present
+                        if ((radios.agree || radios.disagree) && chosen) {
+                            try {
+                                if (chosen === 'AGREE' && radios.agree) radios.agree.click();
+                                if (chosen === 'DISAGREE' && radios.disagree) radios.disagree.click();
+                            } catch (e) {}
+
+                            // extract reason: remove the leading token word
+                            let reason = normalized;
+                            if (chosen) reason = normalized.replace(new RegExp('^' + chosen, 'i'), '').trim();
+                            if (!reason) {
+                                // if no reason included, ask the model for a short justification
+                                const justPrompt = `${queryContent}\n\nQuestion: ${questionText}\n\nYou selected ${chosen}. Please give a short reason (one paragraph). ${this.buildWritingPromptSuffix() || ''}`;
+                                const justReply = await this.fetchAnswer(justPrompt);
+                                reason = String(justReply || '').trim();
+                            }
+
+                            // apply post-process
+                            reason = this.applyWritingPostProcess(reason);
+
+                            // write into tiny iframe or textarea
+                            try {
+                                if (tinyIframe) {
+                                    const iframeDoc = tinyIframe.contentDocument || tinyIframe.contentWindow.document;
+                                    if (iframeDoc) {
+                                        iframeDoc.body.innerHTML = reason;
+                                        setTimeout(() => {
+                                            iframeDoc.body.innerHTML += " ";
+                                            iframeDoc.body.dispatchEvent(new Event('input', { bubbles: true }));
+                                        }, 400);
+                                    }
+                                } else if (plainTextarea) {
+                                    plainTextarea.value = reason;
+                                    plainTextarea.dispatchEvent(new Event('input', { bubbles: true }));
+                                } else if (contentEditable) {
+                                    contentEditable.innerHTML = reason;
+                                    contentEditable.dispatchEvent(new Event('input', { bubbles: true }));
+                                }
+                            } catch (e) {}
+
+                            // Do NOT submit — per user request
+                            this._stoppedByWrite = true;
+                            this.isRunning = false;
+                            try { await this.stopProcessUI(); } catch (e) {}
+                            return false;
+                        } else {
+                            // If no radios or can't interpret, fallback to writing into editor if present
+                            if (writingTarget) {
+                                // use aiReply as answer
+                                let reason = this.applyWritingPostProcess(aiReply);
+
+                                try {
+                                    if (tinyIframe) {
+                                        const iframeDoc = tinyIframe.contentDocument || tinyIframe.contentWindow.document;
+                                        if (iframeDoc) {
+                                            iframeDoc.body.innerHTML = reason;
+                                            setTimeout(() => {
+                                                iframeDoc.body.innerHTML += " ";
+                                                iframeDoc.body.dispatchEvent(new Event('input', { bubbles: true }));
+                                            }, 400);
+                                        }
+                                    } else if (plainTextarea) {
+                                        plainTextarea.value = reason;
+                                        plainTextarea.dispatchEvent(new Event('input', { bubbles: true }));
+                                    } else if (contentEditable) {
+                                        contentEditable.innerHTML = reason;
+                                        contentEditable.dispatchEvent(new Event('input', { bubbles: true }));
+                                    }
+                                } catch (e) {}
+
+                                this._stoppedByWrite = true;
+                                this.isRunning = false;
+                                try { await this.stopProcessUI(); } catch (e) {}
+                                return false;
+                            } else {
+                                // no writing target nor radios — stop
+                                this._stoppedByWrite = true;
+                                this.isRunning = false;
+                                try { await this.stopProcessUI(); } catch (e) {}
+                                return false;
+                            }
+                        }
+                    } // end ready/reflect flow
+
+                    // Not ready/reflect: check for writing box (tinyMCE or textarea or contenteditable)
+                    const tinyIframe = document.querySelector('.tox-edit-area__iframe');
+                    const plainTextarea = document.querySelector('textarea');
+                    const contentEditable = document.querySelector('[contenteditable="true"]');
+                    const writingTarget = tinyIframe || plainTextarea || contentEditable || null;
+
+                    if (writingTarget) {
+                        // Building writing prompt
+                        let prompt = `${queryContent}\n\nPlease provide a detailed written answer based on the above article and question.`;
+                        const suffix = this.buildWritingPromptSuffix();
+                        if (suffix) prompt += '\n\n' + suffix;
+
+                        // log sent
+                        try {
+                            console.groupCollapsed('[AssessmentHelper] Sent (writing) payload');
+                            console.log({ q: prompt, article: this.cachedArticle || null });
+                            console.groupEnd();
+                        } catch (e) {}
+
+                        const answerText = await this.fetchAnswer(prompt);
+
+                        try {
+                            console.groupCollapsed('[AssessmentHelper] Received (writing) answer');
+                            console.log({ raw: answerText });
+                            console.groupEnd();
+                        } catch (e) {}
+
+                        if (!this.isRunning) return false;
+
+                        let processed = this.applyWritingPostProcess(answerText);
+
                         try {
                             if (tinyIframe) {
                                 const iframeDoc = tinyIframe.contentDocument || tinyIframe.contentWindow.document;
                                 if (iframeDoc) {
-                                    iframeDoc.body.innerHTML = answerText;
+                                    iframeDoc.body.innerHTML = processed;
                                     setTimeout(() => {
                                         iframeDoc.body.innerHTML += " ";
-                                        const inputEvent = new Event('input', { bubbles: true });
-                                        iframeDoc.body.dispatchEvent(inputEvent);
-                                    }, 500);
+                                        iframeDoc.body.dispatchEvent(new Event('input', { bubbles: true }));
+                                    }, 400);
                                 } else {
                                     throw new Error('Unable to access iframe document');
                                 }
                             } else if (plainTextarea) {
-                                plainTextarea.value = answerText;
+                                plainTextarea.value = processed;
                                 plainTextarea.dispatchEvent(new Event('input', { bubbles: true }));
                             } else if (contentEditable) {
-                                contentEditable.innerHTML = answerText;
+                                contentEditable.innerHTML = processed;
                                 contentEditable.dispatchEvent(new Event('input', { bubbles: true }));
                             }
 
-                            // stop after write insertion
+                            // stop after insertion
                             this._stoppedByWrite = true;
                             this.isRunning = false;
                             try { await this.stopProcessUI(); } catch (e) {}
@@ -1085,7 +1300,7 @@
                         } catch (e) {
                             const answerContainerEl = document.getElementById('answerContainer');
                             const answerContentEl = answerContainerEl ? answerContainerEl.querySelector('#answerContent') : null;
-                            if (answerContentEl) answerContentEl.textContent = (typeof answerText === 'string' ? answerText : String(answerText));
+                            if (answerContentEl) answerContentEl.textContent = String(answerText || '');
                             if (answerContainerEl) { answerContainerEl.style.display = 'flex'; answerContainerEl.style.visibility = 'visible'; answerContainerEl.classList.add('show'); }
                             this._stoppedByWrite = true;
                             this.isRunning = false;
@@ -1093,13 +1308,13 @@
                             return false;
                         }
                     } else {
+                        // Multiple choice flow
                         queryContent += "\n\nPROVIDE ONLY A ONE-LETTER ANSWER THAT'S IT NOTHING ELSE (A, B, C, or D).";
                         if (excludedAnswers.length > 0) queryContent += `\n\nDo not pick letter ${excludedAnswers.join(', ')}.`;
 
                         try {
                             console.groupCollapsed('[AssessmentHelper] Sent (MC) payload');
-                            console.log('q:', queryContent);
-                            console.log('article:', this.cachedArticle || null);
+                            console.log({ q: queryContent, article: this.cachedArticle || null });
                             console.groupEnd();
                         } catch (e) {}
 
@@ -1126,15 +1341,14 @@
                             answer = chosenLetter;
                             try {
                                 console.groupCollapsed('[AssessmentHelper] Random MC decision');
-                                console.log('Random decision triggered (pct):', randPct);
-                                console.log('Chosen letter:', chosenLetter);
+                                console.log({ pct: randPct, chosen: chosenLetter });
                                 console.groupEnd();
                             } catch (e) {}
                         } else {
                             answer = await this.fetchAnswer(queryContent);
                             try {
                                 console.groupCollapsed('[AssessmentHelper] Received (MC) answer');
-                                console.log(answer);
+                                console.log({ raw: answer });
                                 console.groupEnd();
                             } catch (e) {}
                         }
@@ -1221,7 +1435,7 @@
                     this.isRunning = false;
                     const spinnerEl = document.getElementById('ah-spinner');
                     if (spinnerEl) spinnerEl.style.display = 'none';
-                    try { await this.playVideoOnce(this.getUrl('icons/gotosleep.webm')); } catch (e) {}
+                    try { await this.playVideoOnce(this.getUrl('gotosleep.webm')); } catch (e) {}
                     this.setEyeToSleep();
                     try { console.log('[AssessmentHelper] stopped'); } catch (e) {}
                     const label = document.getElementById('getAnswerButtonText');
@@ -1235,5 +1449,11 @@
         }
     }
 
-    try { new AssessmentHelper(); } catch (e) { console.error(e); }
+    // instantiate
+    try {
+        const instance = new AssessmentHelper();
+        console.log('[AssessmentHelper] instantiated');
+    } catch (e) {
+        console.error('[AssessmentHelper] failed to instantiate', e);
+    }
 })();
