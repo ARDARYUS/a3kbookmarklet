@@ -1,10 +1,9 @@
-// Full AssessmentHelper — All features restored: MC, Writing, Agree/Disagree, AI settings, UI settings, no cloudflare
+// Full AssessmentHelper — optimized; uses user API only; first-person replies; full JSON console logs
 (function () {
     'use strict';
     try { console.clear(); } catch (e) {}
     console.log('[AssessmentHelper] injected');
 
-    // Prevent double-instantiation: allow re-inject after full removal
     if (window.__AssessmentHelperInstance && window.__AssessmentHelperInstance._alive) {
         console.log('[AssessmentHelper] instance already running');
         return;
@@ -15,7 +14,7 @@
             this._alive = true;
             window.__AssessmentHelperInstance = this;
 
-            // state
+            // basic state
             this.answerIsDragging = false;
             this.answerInitialX = 0;
             this.answerInitialY = 0;
@@ -29,18 +28,17 @@
             this.eyeState = 'sleep';
             this.currentVideo = null;
 
-            // Resource base for icons/gifs (user told me icons are in ARDARYUS/a3kbookmarklet/icons)
+            // assets base (icons folder in your repo)
             this.assetBase = 'https://raw.githubusercontent.com/ARDARYUS/a3kbookmarklet/main/icons/';
 
-            // Settings keys & defaults
+            // settings keys & defaults
             this.settingsKeys = {
                 mc_wait: 'ah_mc_wait_ms',
                 mc_random_pct: 'ah_mc_random_pct',
-                ai_use_api: 'ah_ai_use_api',
                 ai_url: 'ah_ai_groq_url',
                 ai_key: 'ah_ai_groq_key',
                 ai_model: 'ah_ai_groq_model',
-                // writing settings
+                // writing
                 w_min: 'ah_w_min_words',
                 w_max: 'ah_w_max_words',
                 w_level: 'ah_w_level',
@@ -51,7 +49,6 @@
             this.defaults = {
                 mc_wait: 300,
                 mc_random_pct: 0,
-                ai_use_api: true,
                 ai_url: 'https://api.groq.com/openai/v1/chat/completions',
                 ai_model: 'llama-3.1-8b-instant',
                 w_min: '',
@@ -62,10 +59,10 @@
                 w_mood: ''
             };
 
-            // UI settings state
-            this.settingsState = 'closed'; // closed | menu | mc | writing | ai
+            // UI state
+            this.settingsState = 'closed';
+            this._eyeOriginal = null;
 
-            // start after DOM ready
             if (document.readyState === 'loading') {
                 document.addEventListener('DOMContentLoaded', () => this.init());
             } else {
@@ -74,9 +71,7 @@
         }
 
         // ---------- storage helpers ----------
-        saveSetting(key, value) {
-            try { localStorage.setItem(key, String(value)); } catch (e) {}
-        }
+        saveSetting(key, value) { try { localStorage.setItem(key, String(value)); } catch (e) {} }
         loadSetting(key, fallback) {
             try {
                 const v = localStorage.getItem(key);
@@ -87,10 +82,9 @@
                 return Number.isFinite(n) ? n : v;
             } catch (e) { return fallback; }
         }
-        // getters
+
         getMCWait() { return Number(this.loadSetting(this.settingsKeys.mc_wait, this.defaults.mc_wait)) || this.defaults.mc_wait; }
         getMCRandomPct() { return Number(this.loadSetting(this.settingsKeys.mc_random_pct, this.defaults.mc_random_pct)) || this.defaults.mc_random_pct; }
-        getAIUseAPI() { return this.loadSetting(this.settingsKeys.ai_use_api, this.defaults.ai_use_api); }
         getAIUrl() { return this.loadSetting(this.settingsKeys.ai_url, this.defaults.ai_url); }
         getAIKey() { return this.loadSetting(this.settingsKeys.ai_key, ''); }
         getAIModel() { return this.loadSetting(this.settingsKeys.ai_model, this.defaults.ai_model); }
@@ -105,7 +99,7 @@
         resetMCWait() { this.saveSetting(this.settingsKeys.mc_wait, this.defaults.mc_wait); }
         resetMCRandom() { this.saveSetting(this.settingsKeys.mc_random_pct, this.defaults.mc_random_pct); }
 
-        // ---------- resource & element helpers ----------
+        // ---------- element & resource helpers ----------
         getUrl(path) {
             if (!path) return '';
             if (/^https?:\/\//i.test(path)) return path;
@@ -135,41 +129,29 @@
         }
 
         loadScript(url) {
-            return new Promise((resolve, reject) => {
+            return new Promise((resolve) => {
                 const existing = Array.from(document.getElementsByTagName('script')).find(s => s.src && s.src.indexOf(url) !== -1);
                 if (existing) return resolve();
                 const script = document.createElement('script');
                 script.src = url;
                 script.onload = () => resolve();
-                script.onerror = () => { script.remove(); reject(new Error('Failed to load ' + url)); };
+                script.onerror = () => resolve(); // non-fatal
                 document.head.appendChild(script);
             });
         }
 
-        // ---------- initialization ----------
+        // ---------- init ----------
         async init() {
-            try {
-                // attempt to load optional libs
-                await Promise.resolve(this.loadScript('https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js')).catch(() => {});
-                await Promise.resolve(this.loadScript('https://unpkg.com/draggabilly@3/dist/draggabilly.pkgd.min.js')).catch(() => {});
+            await Promise.all([
+                this.loadScript('https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js'),
+                this.loadScript('https://unpkg.com/draggabilly@3/dist/draggabilly.pkgd.min.js')
+            ].map(p => p.catch ? p.catch(()=>{}) : p) );
 
-                this.itemMetadata = {
-                    UI: this.createUI(),
-                    answerUI: this.createAnswerUI()
-                };
-                this.playIntroAnimation();
-            } catch (err) {
-                try {
-                    this.itemMetadata = {
-                        UI: this.createUI(),
-                        answerUI: this.createAnswerUI()
-                    };
-                    this.showUI(true);
-                } catch (e) { /* fallback ignore */ }
-            }
+            this.itemMetadata = { UI: this.createUI(), answerUI: this.createAnswerUI() };
+            this.playIntroAnimation();
         }
 
-        // ---------- UI creation ----------
+        // ---------- UI ----------
         createUI() {
             const container = this.createEl('div');
 
@@ -180,84 +162,29 @@
                     "min-height:160px;opacity:0;visibility:hidden;transition:opacity 0.25s ease,width 0.25s ease;font-family:'Nunito',sans-serif;width:180px;height:240px;background:#010203;position:fixed;border-radius:12px;border:2px solid #0a0b0f;display:flex;flex-direction:column;align-items:center;color:white;font-size:16px;top:50%;left:20px;transform:translateY(-50%);z-index:99999;padding:16px;box-shadow:0 10px 8px rgba(0,0,0,0.2), 0 0 8px rgba(255,255,255,0.05);overflow:hidden;white-space:nowrap;"
             });
 
-            const dragHandle = this.createEl('div', {
-                className: 'drag-handle',
-                style: 'width:100%;height:24px;cursor:move;background:transparent;position:absolute;top:0;'
-            });
+            const dragHandle = this.createEl('div', { className: 'drag-handle', style: 'width:100%;height:24px;cursor:move;background:transparent;position:absolute;top:0;' });
 
-            const eyeWrapper = this.createEl('div', {
-                id: 'helperEye',
-                style:
-                    'width:90px;height:90px;margin-top:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;overflow:hidden;transform-style:preserve-3d;transition:all 0.12s linear;will-change:transform,top,right,width,height;transform-origin:50% 40%;pointer-events:none;'
-            });
+            // Eye
+            const eyeWrapper = this.createEl('div', { id: 'helperEye', style: 'width:90px;height:90px;margin-top:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;overflow:hidden;transform-style:preserve-3d;transition:all 0.12s linear;will-change:transform,top,right,width,height;transform-origin:50% 40%;pointer-events:none;' });
+            const uiImg = this.createEl('img', { id: 'helperEyeImg', src: this.getUrl('sleep.gif'), dataset: { idle: this.getUrl('idle.gif'), tilt: this.getUrl('full.gif') }, style: 'width:100%;height:100%;object-fit:cover;display:block;pointer-events:none;' });
+            const uiVideo = this.createEl('video', { id: 'helperEyeVideo', style: 'width:100%;height:100%;object-fit:cover;display:none;pointer-events:none;', autoplay: false, loop: false, muted: true, playsInline: true, preload: 'auto' });
+            eyeWrapper.appendChild(uiImg); eyeWrapper.appendChild(uiVideo);
 
-            const uiImg = this.createEl('img', {
-                id: 'helperEyeImg',
-                src: this.getUrl('sleep.gif'),
-                dataset: { idle: this.getUrl('idle.gif'), tilt: this.getUrl('full.gif') },
-                style: 'width:100%;height:100%;object-fit:cover;display:block;pointer-events:none;'
-            });
+            const closeButton = this.createEl('button', { id: 'closeButton', text: '\u00D7', style: 'position:absolute;top:8px;right:8px;background:none;border:none;color:white;font-size:18px;cursor:pointer;padding:2px 8px;transition:color 0.12s ease, transform 0.1s ease;opacity:0.7;z-index:100005' });
 
-            const uiVideo = this.createEl('video', {
-                id: 'helperEyeVideo',
-                style: 'width:100%;height:100%;object-fit:cover;display:none;pointer-events:none;',
-                autoplay: false,
-                loop: false,
-                muted: true,
-                playsInline: true,
-                preload: 'auto'
-            });
-
-            eyeWrapper.appendChild(uiImg);
-            eyeWrapper.appendChild(uiVideo);
-
-            const closeButton = this.createEl('button', {
-                id: 'closeButton',
-                text: '\u00D7',
-                style: 'position:absolute;top:8px;right:8px;background:none;border:none;color:white;font-size:18px;cursor:pointer;padding:2px 8px;transition:color 0.12s ease, transform 0.1s ease;opacity:0.7;z-index:100005'
-            });
-
-            // Main action button (styled like settings)
-            const getAnswerButton = this.createEl('button', {
-                id: 'getAnswerButton',
-                style:
-                    'background:#151515;border:1px solid rgba(255,255,255,0.04);color:white;padding:10px 12px;border-radius:8px;cursor:pointer;margin-top:18px;width:140px;height:64px;font-size:14px;transition:background 0.14s ease, transform 0.08s ease, box-shadow 0.12s;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:6px;'
-            });
-
-            // spinner element inside button
-            const spinner = this.createEl('div', {
-                id: 'ah-spinner',
-                style: 'width:22px;height:22px;border-radius:50%;border:3px solid rgba(255,255,255,0.12);border-top-color:#ffffff;display:none;animation:ah-spin 0.85s cubic-bezier(.4,.0,.2,1) infinite;'
-            });
-
+            // main action button + spinner
+            const getAnswerButton = this.createEl('button', { id: 'getAnswerButton', style: 'background:#151515;border:1px solid rgba(255,255,255,0.04);color:white;padding:10px 12px;border-radius:8px;cursor:pointer;margin-top:18px;width:140px;height:64px;font-size:14px;transition:background 0.14s ease, transform 0.08s ease, box-shadow 0.12s;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:6px;' });
+            const spinner = this.createEl('div', { id: 'ah-spinner', style: 'width:22px;height:22px;border-radius:50%;border:3px solid rgba(255,255,255,0.12);border-top-color:#ffffff;display:none;animation:ah-spin 0.85s cubic-bezier(.4,.0,.2,1) infinite;' });
             const buttonTextSpan = this.createEl('span', { text: 'work smArt-er', id: 'getAnswerButtonText', style: 'font-size:14px;line-height:1;user-select:none;' });
-
-            getAnswerButton.appendChild(spinner);
-            getAnswerButton.appendChild(buttonTextSpan);
+            getAnswerButton.appendChild(spinner); getAnswerButton.appendChild(buttonTextSpan);
 
             const version = this.createEl('div', { id: 'ah-version', style: 'position:absolute;bottom:8px;right:8px;font-size:12px;opacity:0.9;z-index:100005', text: '1.0' });
 
-            // Settings cog (bottom-left)
-            const settingsCog = this.createEl('button', {
-                id: 'settingsCog',
-                title: 'Settings',
-                innerHTML: '⚙',
-                style: 'position:absolute;bottom:8px;left:8px;background:none;border:none;color:#cfcfcf;font-size:16px;cursor:pointer;opacity:0.95;padding:2px;transition:transform .12s;z-index:100005'
-            });
+            // settings cog & back
+            const settingsCog = this.createEl('button', { id: 'settingsCog', title: 'Settings', innerHTML: '⚙', style: 'position:absolute;bottom:8px;left:8px;background:none;border:none;color:#cfcfcf;font-size:16px;cursor:pointer;opacity:0.95;padding:2px;transition:transform .12s;z-index:100005' });
+            const settingsBack = this.createEl('button', { id: 'settingsBack', title: 'Back', innerHTML: '⟵', style: 'position:absolute;bottom:8px;left:8px;background:none;border:none;color:#ff4d4d;font-size:18px;cursor:pointer;opacity:0;display:none;padding:2px;transition:opacity .12s;z-index:100005' });
 
-            // Back arrow (hidden by default)
-            const settingsBack = this.createEl('button', {
-                id: 'settingsBack',
-                title: 'Back',
-                innerHTML: '⟵',
-                style: 'position:absolute;bottom:8px;left:8px;background:none;border:none;color:#ff4d4d;font-size:18px;cursor:pointer;opacity:0;display:none;padding:2px;transition:opacity .12s;z-index:100005'
-            });
-
-            // Settings container
-            const settingsPanel = this.createEl('div', {
-                id: 'settingsPanel',
-                style: 'position:absolute;top:48px;left:12px;right:12px;bottom:48px;display:none;flex-direction:column;align-items:flex-start;gap:8px;overflow:auto;padding-right:8px;'
-            });
+            const settingsPanel = this.createEl('div', { id: 'settingsPanel', style: 'position:absolute;top:48px;left:12px;right:12px;bottom:48px;display:none;flex-direction:column;align-items:flex-start;gap:8px;overflow:auto;padding-right:8px;' });
 
             launcher.appendChild(dragHandle);
             launcher.appendChild(eyeWrapper);
@@ -270,13 +197,13 @@
 
             container.appendChild(launcher);
 
-            // spinner keyframes and small hover rules
+            // styles
             this.applyStylesOnce('assessment-helper-spinner-styles', `
                 @keyframes ah-spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
                 #getAnswerButton.running { background: #1e1e1e; box-shadow: 0 4px 12px rgba(0,0,0,0.35); }
                 #getAnswerButton.running span { font-size:12px; opacity:0.95; }
-                #settingsPanel input[type="number"] { width:100px; padding:6px; border-radius:6px; border:1px solid rgba(255,255,255,0.08); background:transparent; color:white; }
-                #settingsPanel textarea, #settingsPanel input[type="text"] { width:100%; padding:6px; border-radius:6px; border:1px solid rgba(255,255,255,0.08); background:transparent; color:white; }
+                #settingsPanel input[type="number"], #settingsPanel input[type="text"], #settingsPanel select { width:100%; padding:6px; border-radius:6px; border:1px solid rgba(255,255,255,0.08); background:transparent; color:white; }
+                #settingsPanel textarea { width:100%; padding:6px; border-radius:6px; border:1px solid rgba(255,255,255,0.08); background:transparent; color:white; }
                 #settingsPanel label { font-size:13px; margin-right:6px; display:block; }
                 .ah-reset { cursor:pointer; margin-left:8px; opacity:0.8; font-size:14px; user-select:none; }
                 .ah-section-title { font-weight:700; margin-top:4px; margin-bottom:6px; font-size:14px; }
@@ -295,7 +222,7 @@
                 id: 'answerContainer',
                 className: 'answerLauncher',
                 style:
-                    "outline:none;min-height:60px;transform:translateX(0px) translateY(-50%);opacity:0;visibility:hidden;transition:opacity 0.3s ease, transform 0.3s ease;font-family:'Nunito',sans-serif;width:60px;height:60px;background:#1c1e2b;position:fixed;border-radius:8px;display:flex;justify-content:center;align-items:center;color:white;font-size:24px;top:50%;left:220px;z-index:99998;padding:8px;box-shadow:0 4px 8px rgba(0,0,0,0.2);overflow:hidden;white-space:normal;display:none;"
+                    "outline:none;min-height:60px;transform:translateX(0px) translateY(-50%);opacity:0;visibility:hidden;transition:opacity 0.3s ease, transform 0.3s ease;font-family:'Nunito',sans-serif;width:60px;height:60px;background:#1c1e2b;position:fixed;border-radius:8px;display:flex;justify-content:center;align-items:center;color:white;font-size:16px;top:50%;left:220px;z-index:99998;padding:8px;box-shadow:0 4px 8px rgba(0,0,0,0.2);overflow:hidden;white-space:normal;display:none;"
             });
 
             const dragHandle = this.createEl('div', { className: 'answer-drag-handle', style: 'width:100%;height:24px;cursor:move;background:transparent;position:absolute;top:0;' });
@@ -311,24 +238,12 @@
 
         // ---------- intro & show ----------
         playIntroAnimation() {
-            if (typeof anime === 'undefined') {
-                this.showUI();
-                return;
-            }
+            if (typeof anime === 'undefined') { this.showUI(); return; }
             const imageUrl = this.getUrl('eyebackground.gif');
-            const introImgElement = this.createEl('img', {
-                src: imageUrl,
-                id: 'introLoaderImage',
-                style: 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(0.5);width:100px;height:auto;border-radius:12px;box-shadow:0 4px 8px rgba(0,0,0,0.2);z-index:100001;opacity:0;'
-            });
+            const introImgElement = this.createEl('img', { src: imageUrl, id: 'introLoaderImage', style: 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(0.5);width:100px;height:auto;border-radius:12px;box-shadow:0 4px 8px rgba(0,0,0,0.2);z-index:100001;opacity:0;' });
             document.body.appendChild(introImgElement);
-
-            anime.timeline({
-                easing: 'easeInOutQuad',
-                duration: 800,
-                complete: () => { try { introImgElement.remove(); } catch (e) {} this.showUI(); }
-            })
-            .add({ targets: introImgElement, opacity: [0, 1], scale: [0.5, 1], rotate: '1turn', duration: 1000, easing: 'easeOutExpo' })
+            anime.timeline({ easing: 'easeInOutQuad', duration: 800, complete: () => { try { introImgElement.remove(); } catch (e) {} this.showUI(); } })
+            .add({ targets: introImgElement, opacity: [0,1], scale: [0.5,1], rotate: '1turn', duration: 1000, easing: 'easeOutExpo' })
             .add({ targets: introImgElement, translateY: '-=20', duration: 500, easing: 'easeInOutSine' })
             .add({ targets: introImgElement, translateY: '+=20', duration: 500, easing: 'easeInOutSine' })
             .add({ targets: introImgElement, opacity: 0, duration: 500, easing: 'linear' }, '+=500');
@@ -339,9 +254,7 @@
             const launcher = document.getElementById('Launcher');
             if (!launcher) { this.setupEventListeners(); return; }
             if (skipAnimation) {
-                launcher.style.visibility = 'visible';
-                launcher.style.opacity = 1;
-                this.setupEventListeners();
+                launcher.style.visibility = 'visible'; launcher.style.opacity = 1; this.setupEventListeners();
             } else {
                 launcher.style.visibility = 'visible';
                 setTimeout(() => (launcher.style.opacity = 1), 10);
@@ -350,16 +263,14 @@
         }
 
         showAlert(message, type = 'info') {
-            const alertContainer = this.createEl('div', {
-                style: `position:fixed;top:20px;left:50%;transform:translateX(-50%);background-color:${type === 'error' ? '#dc3545' : '#007bff'};color:white;padding:15px 25px;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.2);z-index:100000;opacity:0;transition:opacity 0.5s ease-in-out;font-family:'Nunito',sans-serif;font-size:16px;max-width:80%;text-align:center;`
-            });
+            const alertContainer = this.createEl('div', { style: `position:fixed;top:20px;left:50%;transform:translateX(-50%);background-color:${type === 'error' ? '#dc3545' : '#007bff'};color:white;padding:15px 25px;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.2);z-index:100000;opacity:0;transition:opacity 0.5s ease-in-out;font-family:'Nunito',sans-serif;font-size:16px;max-width:80%;text-align:center;` });
             alertContainer.textContent = message;
             document.body.appendChild(alertContainer);
             setTimeout(() => (alertContainer.style.opacity = 1), 10);
             setTimeout(() => { alertContainer.style.opacity = 0; alertContainer.addEventListener('transitionend', () => alertContainer.remove()); }, 5000);
         }
 
-        // ---------- article fetch ----------
+        // ---------- content fetching ----------
         async fetchArticleContent() {
             try {
                 const articleContainer = document.querySelector('#start-reading');
@@ -368,86 +279,58 @@
                     const paragraphs = articleContainer.querySelectorAll('p');
                     articleContent = Array.from(paragraphs).map((p) => p.textContent.trim()).join(' ');
                 }
-
                 const questionContainer = document.querySelector('#activity-component-react') || document.querySelector('#question-text');
                 let questionContent = '';
                 if (questionContainer) questionContent = questionContainer.textContent.trim();
-
                 let writingQuestion = '';
                 try {
                     const xpath = '//*[@id="before-reading-thought"]/div[1]/p/div';
                     const result = document.evaluate(xpath, document, null, XPathResult.STRING_TYPE, null);
                     writingQuestion = (result && result.stringValue) ? result.stringValue.trim() : '';
-                } catch (e) {
-                    writingQuestion = '';
-                }
-
+                } catch (e) { writingQuestion = ''; }
                 const combinedContent = `${articleContent}\n\n${questionContent}\n\n${writingQuestion}`;
                 this.cachedArticle = combinedContent;
                 return combinedContent;
-            } catch (err) {
-                return '';
-            }
+            } catch (err) { return ''; }
         }
 
-        // ---------- AI call (only user API) ----------
+        // ---------- AI call (user API only) ----------
         async fetchAnswer(queryContent, retryCount = 0) {
             const MAX_RETRIES = 2;
             const RETRY_DELAY_MS = 1000;
             try {
-                // Validate API settings
-                const useApi = this.getAIUseAPI();
                 const url = this.getAIUrl();
                 const key = this.getAIKey();
                 const model = this.getAIModel() || this.defaults.ai_model;
-
-                if (!useApi || !url || !key) {
-                    const msg = 'AI API not configured. Enable "Use API" and provide URL/key in AI settings.';
+                if (!url || !key) {
+                    const msg = 'AI API not configured. Please set API URL and Key in AI Settings.';
                     console.warn('[AssessmentHelper] fetchAnswer aborted:', msg);
                     return `Error: ${msg}`;
                 }
-
-                // abort previous if any
                 if (this.currentAbortController) {
                     try { this.currentAbortController.abort(); } catch (e) {}
                 }
                 this.currentAbortController = new AbortController();
                 const signal = this.currentAbortController.signal;
 
-                // Build payload — attempt chat completions structure
-                const body = JSON.stringify({
-                    model: model,
-                    messages: [{ role: 'user', content: queryContent }]
-                });
-
-                const resp = await fetch(url, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': 'Bearer ' + key
-                    },
-                    body,
-                    signal
-                });
+                const payload = { model, messages: [{ role: 'user', content: queryContent }] };
+                const resp = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key }, body: JSON.stringify(payload), signal });
 
                 this.currentAbortController = null;
 
                 if (!resp.ok) {
-                    const text = await resp.text().catch(() => '');
+                    const text = await resp.text().catch(()=>'');
                     if (resp.status >= 500 && retryCount < MAX_RETRIES) {
                         await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
                         return this.fetchAnswer(queryContent, retryCount + 1);
                     }
                     throw new Error(`API error ${resp.status}: ${text}`);
                 }
-
                 const data = await resp.json().catch(() => null);
-                // Try to extract response in common shapes
-                // groq/openai-like: data.choices[0].message.content or data.choices[0].text or data.response
                 if (data) {
                     if (data.choices && data.choices[0]) {
                         const ch = data.choices[0];
-                        const msg = (ch.message && ch.message.content) || ch.text || ch.delta && ch.delta.content;
+                        const msg = (ch.message && ch.message.content) || ch.text || (ch.delta && ch.delta.content);
                         if (msg) return String(msg).trim();
                     }
                     if (data.response) return String(data.response).trim();
@@ -481,9 +364,7 @@
                 this.eyeState = 'full';
                 this.clearCurrentVideo();
                 const img = document.getElementById('helperEyeImg');
-                const video = document.getElementById('helperEyeVideo');
-                if (!img || !video) return;
-                video.style.display = 'none';
+                if (!img) return;
                 img.style.display = 'block';
                 img.src = this.getUrl('full.gif') + '?r=' + Date.now();
             } catch (err) {}
@@ -495,9 +376,7 @@
                 await this.playVideoOnce(this.getUrl('wakeup.webm'));
                 if (this.eyeState === 'full') return;
                 const img = document.getElementById('helperEyeImg');
-                const video = document.getElementById('helperEyeVideo');
-                if (!img || !video) return;
-                video.style.display = 'none';
+                if (!img) return;
                 img.style.display = 'block';
                 img.src = this.getUrl('idle.gif') + '?r=' + Date.now();
                 this.eyeState = 'idle';
@@ -570,7 +449,7 @@
             } catch (err) {}
         }
 
-        // ---------- UI start/stop ----------
+        // ---------- UI Start/Stop ----------
         async startProcessUI() {
             const btn = document.getElementById('getAnswerButton');
             const spinner = document.getElementById('ah-spinner');
@@ -602,7 +481,7 @@
             }
         }
 
-        // ---------- settings UI building ----------
+        // ---------- settings UI ----------
         _computeExpandRight() {
             const launcher = document.getElementById('Launcher');
             if (!launcher) return true;
@@ -632,10 +511,7 @@
             const eye = document.getElementById('helperEye');
             if (!eye) return;
             if (!this._eyeOriginal) {
-                this._eyeOriginal = {
-                    style: eye.getAttribute('style') || '',
-                    parentDisplay: eye.style.display || ''
-                };
+                this._eyeOriginal = { style: eye.getAttribute('style') || '', parentDisplay: eye.style.display || '' };
             }
             eye.style.display = 'flex';
             eye.style.position = 'absolute';
@@ -676,27 +552,11 @@
             const title = this.createEl('div', { className: 'ah-section-title', text: 'Settings' });
             panel.appendChild(title);
 
-            const mcBtn = this.createEl('button', {
-                id: 'mcSettingsBtn',
-                text: 'Multiple Choice Settings',
-                style: 'padding:10px 12px;border-radius:8px;background:#151515;border:1px solid rgba(255,255,255,0.04);color:white;cursor:pointer;'
-            });
+            const mcBtn = this.createEl('button', { id: 'mcSettingsBtn', text: 'Multiple Choice Settings', style: 'padding:10px 12px;border-radius:8px;background:#151515;border:1px solid rgba(255,255,255,0.04);color:white;cursor:pointer;' });
+            const wrBtn = this.createEl('button', { id: 'writingSettingsBtn', text: 'Writing Settings', style: 'padding:10px 12px;border-radius:8px;background:#151515;border:1px solid rgba(255,255,255,0.04);color:white;cursor:pointer;' });
+            const aiBtn = this.createEl('button', { id: 'aiSettingsBtn', text: 'AI Settings', style: 'padding:10px 12px;border-radius:8px;background:#151515;border:1px solid rgba(255,255,255,0.04);color:white;cursor:pointer;' });
 
-            const wrBtn = this.createEl('button', {
-                id: 'writingSettingsBtn',
-                text: 'Writing Settings',
-                style: 'padding:10px 12px;border-radius:8px;background:#151515;border:1px solid rgba(255,255,255,0.04);color:white;cursor:pointer;'
-            });
-
-            const aiBtn = this.createEl('button', {
-                id: 'aiSettingsBtn',
-                text: 'AI Settings',
-                style: 'padding:10px 12px;border-radius:8px;background:#151515;border:1px solid rgba(255,255,255,0.04);color:white;cursor:pointer;'
-            });
-
-            panel.appendChild(mcBtn);
-            panel.appendChild(wrBtn);
-            panel.appendChild(aiBtn);
+            panel.appendChild(mcBtn); panel.appendChild(wrBtn); panel.appendChild(aiBtn);
 
             mcBtn.addEventListener('click', (e) => { e.preventDefault(); this.openMCSettings(); });
             wrBtn.addEventListener('click', (e) => { e.preventDefault(); this.openWritingSettings(); });
@@ -779,68 +639,52 @@
             const title = this.createEl('div', { className: 'ah-section-title', text: 'Writing Settings' });
             panel.appendChild(title);
 
-            // min words
             const minRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;' });
             const minLabel = this.createEl('label', { text: 'Minimum words:', style: 'min-width:140px;' });
             const minInput = this.createEl('input', { type: 'number', id: 'wMinInput', value: String(this.getWMin()) });
             const minReset = this.createEl('span', { className: 'ah-reset', text: '↺', title: 'Reset' });
             minReset.addEventListener('click', () => { this.saveSetting(this.settingsKeys.w_min, ''); minInput.value = ''; });
             minInput.addEventListener('change', () => { this.saveSetting(this.settingsKeys.w_min, minInput.value.trim()); });
-
             minRow.appendChild(minLabel); minRow.appendChild(minInput); minRow.appendChild(minReset);
             panel.appendChild(minRow);
 
-            // max words
             const maxRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;' });
             const maxLabel = this.createEl('label', { text: 'Maximum words:', style: 'min-width:140px;' });
             const maxInput = this.createEl('input', { type: 'number', id: 'wMaxInput', value: String(this.getWMax()) });
             const maxReset = this.createEl('span', { className: 'ah-reset', text: '↺', title: 'Reset' });
             maxReset.addEventListener('click', () => { this.saveSetting(this.settingsKeys.w_max, ''); maxInput.value = ''; });
             maxInput.addEventListener('change', () => { this.saveSetting(this.settingsKeys.w_max, maxInput.value.trim()); });
-
             maxRow.appendChild(maxLabel); maxRow.appendChild(maxInput); maxRow.appendChild(maxReset);
             panel.appendChild(maxRow);
 
-            // english level dropdown
             const levelRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;' });
             const levelLabel = this.createEl('label', { text: 'English level:', style: 'min-width:140px;' });
             const levelSelect = this.createEl('select', { id: 'wLevelSelect' });
             ['A1','A2','B1','B2','C1','C2'].forEach(l => {
-                const opt = document.createElement('option');
-                opt.value = l;
-                opt.text = l;
+                const opt = document.createElement('option'); opt.value = l; opt.text = l;
                 if (l === this.getWLevel()) opt.selected = true;
                 levelSelect.appendChild(opt);
             });
             levelSelect.addEventListener('change', () => this.saveSetting(this.settingsKeys.w_level, levelSelect.value));
+            levelRow.appendChild(levelLabel); levelRow.appendChild(levelSelect); panel.appendChild(levelRow);
 
-            levelRow.appendChild(levelLabel); levelRow.appendChild(levelSelect);
-            panel.appendChild(levelRow);
-
-            // blacklist characters
             const blackRow = this.createEl('div', { style: 'display:flex;flex-direction:column;gap:6px;margin-bottom:8px;width:100%;' });
             const blackLabel = this.createEl('label', { text: 'Blacklist characters (remove from AI output):', style: 'min-width:140px;' });
             const blackInput = this.createEl('input', { type: 'text', id: 'wBlacklist', value: this.getWBlacklist() });
             blackInput.addEventListener('change', () => this.saveSetting(this.settingsKeys.w_blacklist, blackInput.value || ''));
-            blackRow.appendChild(blackLabel); blackRow.appendChild(blackInput);
-            panel.appendChild(blackRow);
+            blackRow.appendChild(blackLabel); blackRow.appendChild(blackInput); panel.appendChild(blackRow);
 
-            // lowercase checkbox
             const lowerRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;' });
             const lowerLabel = this.createEl('label', { text: 'Only lowercase output:', style: 'min-width:140px;' });
-            const lowerInput = this.createEl('input', { type: 'checkbox', id: 'wLower' });
-            lowerInput.checked = this.getWLower();
+            const lowerInput = this.createEl('input', { type: 'checkbox', id: 'wLower' }); lowerInput.checked = this.getWLower();
             lowerInput.addEventListener('change', () => this.saveSetting(this.settingsKeys.w_lower, lowerInput.checked));
-            lowerRow.appendChild(lowerLabel); lowerRow.appendChild(lowerInput);
-            panel.appendChild(lowerRow);
+            lowerRow.appendChild(lowerLabel); lowerRow.appendChild(lowerInput); panel.appendChild(lowerRow);
 
-            // mood / style box
             const moodRow = this.createEl('div', { style: 'display:flex;flex-direction:column;gap:6px;margin-bottom:8px;width:100%;' });
             const moodLabel = this.createEl('label', { text: 'Writing style / mood (appended to prompt):', style: 'min-width:140px;' });
             const moodInput = this.createEl('textarea', { id: 'wMood', rows: 3, text: this.getWMood() });
             moodInput.addEventListener('change', () => this.saveSetting(this.settingsKeys.w_mood, moodInput.value || ''));
-            moodRow.appendChild(moodLabel); moodRow.appendChild(moodInput);
-            panel.appendChild(moodRow);
+            moodRow.appendChild(moodLabel); moodRow.appendChild(moodInput); panel.appendChild(moodRow);
 
             const note = this.createEl('div', { text: 'Settings are stored locally in your browser and applied client-side to AI output.', style: 'font-size:12px;opacity:0.8;margin-top:6px;' });
             panel.appendChild(note);
@@ -857,40 +701,25 @@
             const title = this.createEl('div', { className: 'ah-section-title', text: 'AI Settings' });
             panel.appendChild(title);
 
-            // Use API toggle
-            const useRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;' });
-            const useLabel = this.createEl('label', { text: 'Use API method (must set URL & key):', style: 'min-width:140px;' });
-            const useInput = this.createEl('input', { type: 'checkbox', id: 'aiUseApi' });
-            useInput.checked = this.getAIUseAPI();
-            useInput.addEventListener('change', () => this.saveSetting(this.settingsKeys.ai_use_api, useInput.checked));
-            useRow.appendChild(useLabel); useRow.appendChild(useInput);
-            panel.appendChild(useRow);
-
-            // URL input (saved)
             const urlRow = this.createEl('div', { style: 'display:flex;flex-direction:column;gap:6px;margin-bottom:8px;width:100%;' });
             const urlLabel = this.createEl('label', { text: 'API URL:', style: 'min-width:140px;' });
             const urlInput = this.createEl('input', { type: 'text', id: 'aiUrl', value: this.getAIUrl() });
             urlInput.addEventListener('change', () => this.saveSetting(this.settingsKeys.ai_url, urlInput.value.trim()));
-            urlRow.appendChild(urlLabel); urlRow.appendChild(urlInput);
-            panel.appendChild(urlRow);
+            urlRow.appendChild(urlLabel); urlRow.appendChild(urlInput); panel.appendChild(urlRow);
 
-            // Key input (sensitive, stored locally)
             const keyRow = this.createEl('div', { style: 'display:flex;flex-direction:column;gap:6px;margin-bottom:8px;width:100%;' });
             const keyLabel = this.createEl('label', { text: 'API Key (stored locally):', style: 'min-width:140px;' });
             const keyInput = this.createEl('input', { type: 'text', id: 'aiKey', value: this.getAIKey() });
             keyInput.addEventListener('change', () => this.saveSetting(this.settingsKeys.ai_key, keyInput.value.trim()));
-            keyRow.appendChild(keyLabel); keyRow.appendChild(keyInput);
-            panel.appendChild(keyRow);
+            keyRow.appendChild(keyLabel); keyRow.appendChild(keyInput); panel.appendChild(keyRow);
 
-            // Model input
             const modelRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;' });
             const modelLabel = this.createEl('label', { text: 'Model:', style: 'min-width:140px;' });
             const modelInput = this.createEl('input', { type: 'text', id: 'aiModel', value: this.getAIModel() });
             modelInput.addEventListener('change', () => this.saveSetting(this.settingsKeys.ai_model, modelInput.value.trim()));
-            modelRow.appendChild(modelLabel); modelRow.appendChild(modelInput);
-            panel.appendChild(modelRow);
+            modelRow.appendChild(modelLabel); modelRow.appendChild(modelInput); panel.appendChild(modelRow);
 
-            const note = this.createEl('div', { text: 'Default mode: API method using your URL/key. Keep these safe.', style: 'font-size:12px;opacity:0.85;margin-top:6px;' });
+            const note = this.createEl('div', { text: 'Default: use your API URL & key. Keep them safe.', style: 'font-size:12px;opacity:0.85;margin-top:6px;' });
             panel.appendChild(note);
         }
 
@@ -902,7 +731,6 @@
             const settingsBack = document.getElementById('settingsBack');
 
             if (this.settingsState === 'mc' || this.settingsState === 'writing' || this.settingsState === 'ai') {
-                // shrink to menu view
                 const expandRight = this._computeExpandRight();
                 this._setLauncherWidthAndAnchor(360, expandRight);
                 this.settingsState = 'menu';
@@ -911,24 +739,19 @@
             }
 
             if (this.settingsState === 'menu') {
-                // hide panel
                 if (settingsPanel) { settingsPanel.style.display = 'none'; settingsPanel.innerHTML = ''; }
-                // restore main button with fade
                 if (btn) { btn.style.display = 'flex'; setTimeout(()=>btn.style.opacity='1',10); }
-                // restore cog/back
                 if (settingsBack) { settingsBack.style.opacity = '0'; setTimeout(()=>settingsBack.style.display='none',120); }
                 if (settingsCog) settingsCog.style.display = 'block';
-                // shrink launcher back to default 180
                 const expandRight = this._computeExpandRight();
                 this._setLauncherWidthAndAnchor(180, expandRight);
-                // restore eye
                 this._restoreEyeFromShrink();
                 this.settingsState = 'closed';
                 return;
             }
         }
 
-        // ---------- event wiring & behavior ----------
+        // ---------- event wiring ----------
         setupEventListeners() {
             try {
                 const launcher = document.getElementById('Launcher');
@@ -991,7 +814,6 @@
                             const answerWrap = document.querySelector('#answerContainer') && document.querySelector('#answerContainer').parentNode;
                             if (answerWrap && answerWrap.parentNode) answerWrap.parentNode.removeChild(answerWrap);
                         } catch (e) {}
-                        // clear instance
                         try { window.__AssessmentHelperInstance = null; } catch (e) {}
                         this._alive = false;
                     });
@@ -1026,8 +848,8 @@
                 // Toggle start/stop
                 getAnswerButton.addEventListener('click', async () => {
                     if (!this.isRunning) {
-                        // Validate API configured
-                        if (!this.getAIUseAPI() || !this.getAIUrl() || !this.getAIKey()) {
+                        // Validate API configured (no use-api toggle anymore; require URL & key)
+                        if (!this.getAIUrl() || !this.getAIKey()) {
                             this.showAlert('AI not configured. Open AI Settings and provide URL & Key.', 'error');
                             return;
                         }
@@ -1042,7 +864,6 @@
                     }
                 });
 
-                // Settings wiring
                 const settingsCog = document.getElementById('settingsCog');
                 const settingsBack = document.getElementById('settingsBack');
                 if (settingsCog) settingsCog.addEventListener('click', (e) => { e.preventDefault(); this.openSettingsMenu(); });
@@ -1053,27 +874,19 @@
             }
         }
 
-        // ---------- utilities for writing postprocess ----------
+        // ---------- writing helpers ----------
         applyWritingPostProcess(text) {
             let out = String(text || '');
 
-            // blacklist characters: remove all occurrences
+            // remove blacklist characters
             const blacklist = this.getWBlacklist() || '';
             if (blacklist && blacklist.length > 0) {
-                // treat as literal characters to remove
                 const uniqueChars = Array.from(new Set(blacklist.split('')));
-                const regex = new RegExp('[' + uniqueChars.map(c => {
-                    // escape regexp special
-                    return c.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
-                }).join('') + ']', 'g');
+                const regex = new RegExp('[' + uniqueChars.map(c => c.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')).join('') + ']', 'g');
                 out = out.replace(regex, '');
             }
 
-            // lowercase if requested
-            if (this.getWLower()) {
-                out = out.toLowerCase();
-            }
-
+            if (this.getWLower()) out = out.toLowerCase();
             return out;
         }
 
@@ -1087,13 +900,14 @@
             if (level) parts.push(`Use English level ${level} (CEFR).`);
             const mood = String(this.getWMood()).trim();
             if (mood) parts.push(mood);
-            if (parts.length > 0) return parts.join(' ');
-            return '';
+            // always request first-person style for writing
+            parts.push('Write in first person and adopt an appropriate tone.');
+            return parts.join(' ');
         }
 
-        // ---------- special Ready/Reflect handling ----------
+        // ---------- ready/reflect helpers ----------
         _isReadyOrReflectUrl() {
-            const href = location.href || '';
+            const href = (location.href || '').toLowerCase();
             return href.includes('lesson/ready') || href.includes('lesson/reflect');
         }
 
@@ -1121,8 +935,7 @@
                 if (!this.isRunning) return false;
                 try {
                     let queryContent = await this.fetchArticleContent();
-
-                    // special ready/reflect flow
+                    // READY/REFLECT flow
                     if (this._isReadyOrReflectUrl()) {
                         const questionText = this._readReadyReflectQuestion();
                         const radios = this._getReadyReflectRadioInputs();
@@ -1131,53 +944,48 @@
                         const contentEditable = document.querySelector('[contenteditable="true"]');
                         const writingTarget = tinyIframe || plainTextarea || contentEditable || null;
 
-                        // prepare prompt for agree/disagree decision
-                        let prompt = `${queryContent}\n\nQuestion: ${questionText}\n\nIs the student likely to AGREE or DISAGREE with the statement? Provide just the single word "AGREE" or "DISAGREE". Then write a short reason in one paragraph.`;
-                        const suffix = this.buildWritingPromptSuffix();
-                        if (suffix) prompt += '\n\n' + suffix;
-
-                        // Log what we sent (expandable)
+                        // build prompt that requires first-person start
+                        let prompt = `${queryContent}\n\nQuestion: ${questionText}\n\nRespond in first person. Begin your response with either "I am likely to agree" or "I am likely to disagree", followed by a short paragraph explaining why. ${this.buildWritingPromptSuffix()}`;
+                        // log (full) as JSON string (expandable fully)
                         try {
                             console.groupCollapsed('[AssessmentHelper] Sent (Ready/Reflect) payload');
-                            console.log({ q: prompt, article: this.cachedArticle || null });
+                            console.log('payload:' , JSON.stringify({ q: prompt, article: this.cachedArticle || null }, null, 2));
                             console.groupEnd();
                         } catch (e) {}
 
                         const aiReply = await this.fetchAnswer(prompt);
                         try {
                             console.groupCollapsed('[AssessmentHelper] Received (Ready/Reflect) answer');
-                            console.log({ raw: aiReply });
+                            console.log('reply:' , JSON.stringify({ raw: aiReply }, null, 2));
                             console.groupEnd();
                         } catch (e) {}
 
                         if (!this.isRunning) return false;
 
-                        // Interpret reply: check starts with AGREE/DISAGREE
                         const normalized = String(aiReply || '').trim();
-                        const firstToken = normalized.split(/\s+/)[0].toUpperCase();
-                        const chosen = (firstToken === 'AGREE' || firstToken === 'DISAGREE') ? firstToken : null;
+                        const firstToken = normalized.split(/\s+/).slice(0,4).join(' ').toLowerCase(); // check beginning
+                        // Check for first-person markers
+                        const chosen = normalized.toLowerCase().startsWith('i am likely to agree') || normalized.toLowerCase().startsWith('i agree')
+                            ? 'AGREE' : (normalized.toLowerCase().startsWith('i am likely to disagree') || normalized.toLowerCase().startsWith('i disagree') ? 'DISAGREE' : null);
 
-                        // If radio exists, click it then write reason in tiny iframe if present
                         if ((radios.agree || radios.disagree) && chosen) {
                             try {
                                 if (chosen === 'AGREE' && radios.agree) radios.agree.click();
                                 if (chosen === 'DISAGREE' && radios.disagree) radios.disagree.click();
                             } catch (e) {}
 
-                            // extract reason: remove the leading token word
+                            // extract reason: remove leading "I am likely to agree/disagree" phrase if present
                             let reason = normalized;
-                            if (chosen) reason = normalized.replace(new RegExp('^' + chosen, 'i'), '').trim();
+                            reason = reason.replace(/^\s*(i am likely to agree|i am likely to disagree|i agree|i disagree)\b[:\-\s]*?/i, '').trim();
                             if (!reason) {
-                                // if no reason included, ask the model for a short justification
-                                const justPrompt = `${queryContent}\n\nQuestion: ${questionText}\n\nYou selected ${chosen}. Please give a short reason (one paragraph). ${this.buildWritingPromptSuffix() || ''}`;
+                                const justPrompt = `${queryContent}\n\nQuestion: ${questionText}\n\nYou selected ${chosen}. Please give a short reason (one paragraph). ${this.buildWritingPromptSuffix()}`;
                                 const justReply = await this.fetchAnswer(justPrompt);
                                 reason = String(justReply || '').trim();
                             }
 
-                            // apply post-process
                             reason = this.applyWritingPostProcess(reason);
 
-                            // write into tiny iframe or textarea
+                            // write into editor if present (TinyMCE first)
                             try {
                                 if (tinyIframe) {
                                     const iframeDoc = tinyIframe.contentDocument || tinyIframe.contentWindow.document;
@@ -1197,17 +1005,15 @@
                                 }
                             } catch (e) {}
 
-                            // Do NOT submit — per user request
+                            // Do NOT submit; stop process
                             this._stoppedByWrite = true;
                             this.isRunning = false;
                             try { await this.stopProcessUI(); } catch (e) {}
                             return false;
                         } else {
-                            // If no radios or can't interpret, fallback to writing into editor if present
+                            // if no radios or cannot interpret, write into editor if available
                             if (writingTarget) {
-                                // use aiReply as answer
                                 let reason = this.applyWritingPostProcess(aiReply);
-
                                 try {
                                     if (tinyIframe) {
                                         const iframeDoc = tinyIframe.contentDocument || tinyIframe.contentWindow.document;
@@ -1232,39 +1038,32 @@
                                 try { await this.stopProcessUI(); } catch (e) {}
                                 return false;
                             } else {
-                                // no writing target nor radios — stop
                                 this._stoppedByWrite = true;
                                 this.isRunning = false;
                                 try { await this.stopProcessUI(); } catch (e) {}
                                 return false;
                             }
                         }
-                    } // end ready/reflect flow
+                    } // end ready/reflect
 
-                    // Not ready/reflect: check for writing box (tinyMCE or textarea or contenteditable)
+                    // Not ready/reflect: check for writing target
                     const tinyIframe = document.querySelector('.tox-edit-area__iframe');
                     const plainTextarea = document.querySelector('textarea');
                     const contentEditable = document.querySelector('[contenteditable="true"]');
                     const writingTarget = tinyIframe || plainTextarea || contentEditable || null;
 
                     if (writingTarget) {
-                        // Building writing prompt
-                        let prompt = `${queryContent}\n\nPlease provide a detailed written answer based on the above article and question.`;
-                        const suffix = this.buildWritingPromptSuffix();
-                        if (suffix) prompt += '\n\n' + suffix;
-
-                        // log sent
+                        let prompt = `${queryContent}\n\nPlease provide a detailed written answer based on the above article and question. ${this.buildWritingPromptSuffix()}`;
                         try {
                             console.groupCollapsed('[AssessmentHelper] Sent (writing) payload');
-                            console.log({ q: prompt, article: this.cachedArticle || null });
+                            console.log('payload:' , JSON.stringify({ q: prompt, article: this.cachedArticle || null }, null, 2));
                             console.groupEnd();
                         } catch (e) {}
 
                         const answerText = await this.fetchAnswer(prompt);
-
                         try {
                             console.groupCollapsed('[AssessmentHelper] Received (writing) answer');
-                            console.log({ raw: answerText });
+                            console.log('reply:' , JSON.stringify({ raw: answerText }, null, 2));
                             console.groupEnd();
                         } catch (e) {}
 
@@ -1292,7 +1091,6 @@
                                 contentEditable.dispatchEvent(new Event('input', { bubbles: true }));
                             }
 
-                            // stop after insertion
                             this._stoppedByWrite = true;
                             this.isRunning = false;
                             try { await this.stopProcessUI(); } catch (e) {}
@@ -1314,7 +1112,7 @@
 
                         try {
                             console.groupCollapsed('[AssessmentHelper] Sent (MC) payload');
-                            console.log({ q: queryContent, article: this.cachedArticle || null });
+                            console.log('payload:' , JSON.stringify({ q: queryContent, article: this.cachedArticle || null }, null, 2));
                             console.groupEnd();
                         } catch (e) {}
 
@@ -1341,14 +1139,14 @@
                             answer = chosenLetter;
                             try {
                                 console.groupCollapsed('[AssessmentHelper] Random MC decision');
-                                console.log({ pct: randPct, chosen: chosenLetter });
+                                console.log('detail:' , JSON.stringify({ pct: randPct, chosen: chosenLetter }, null, 2));
                                 console.groupEnd();
                             } catch (e) {}
                         } else {
                             answer = await this.fetchAnswer(queryContent);
                             try {
                                 console.groupCollapsed('[AssessmentHelper] Received (MC) answer');
-                                console.log({ raw: answer });
+                                console.log('reply:' , JSON.stringify({ raw: answer }, null, 2));
                                 console.groupEnd();
                             } catch (e) {}
                         }
@@ -1449,7 +1247,6 @@
         }
     }
 
-    // instantiate
     try {
         const instance = new AssessmentHelper();
         console.log('[AssessmentHelper] instantiated');
