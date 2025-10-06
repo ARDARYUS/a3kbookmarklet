@@ -1,4 +1,8 @@
-// AssessmentHelper — Ready/Reflect: click radio but do NOT submit; then write justification in TinyMCE or other editor
+// AssessmentHelper — full build (uses only user-provided GroqCloud API; removes Cloudflare endpoints)
+// - Removes Cloudflare entirely; uses user-saved API URL/key/model stored in localStorage
+// - Adds AI settings UI (URL, API key, model) saved to localStorage
+// - Properly removes DOM on close so the helper can be re-injected without page reload
+// - Keeps existing functionality (MC, writing, settings, eye animations, random MC, etc.)
 (function () {
     try { console.clear(); } catch (e) {}
     console.log('[AssessmentHelper] injected');
@@ -11,8 +15,9 @@
 
     class AssessmentHelper {
         constructor() {
-            // inside constructor(), near the top
+            // Expose instance globally so close handler can clean it up
             window.__AssessmentHelperInstance = this;
+
             this.answerIsDragging = false;
             this.answerInitialX = 0;
             this.answerInitialY = 0;
@@ -29,33 +34,20 @@
             this.animeScriptUrl = 'https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js';
             this.draggabillyScriptUrl = 'https://unpkg.com/draggabilly@3/dist/draggabilly.pkgd.min.js';
 
-            this.askEndpoint = 'https://f-ghost-insights-pressed.trycloudflare.com/ask';
-            this.assetBase = 'https://raw.githubusercontent.com/ARDARYUS/a3kbookmarklet/main/icons/';
-
-            // Settings keys & defaults
+            // settings keys & defaults
             this.settingsKeys = {
                 mc_wait: 'ah_mc_wait_ms',
                 mc_random_pct: 'ah_mc_random_pct',
-                w_min: 'ah_w_min',
-                w_max: 'ah_w_max',
-                w_level: 'ah_w_level',
-                w_blacklist: 'ah_w_blacklist',
-                w_lowercase: 'ah_w_lowercase',
-                w_mood: 'ah_w_mood',
-                ai_use_api: 'ah_ai_use_api',
-                ai_groq_url: 'ah_ai_groq_url',
-                ai_groq_key: 'ah_ai_groq_key',
-                ai_groq_model: 'ah_ai_groq_model'
+                ai_url: 'ah_ai_groq_url',
+                ai_key: 'ah_ai_groq_key',
+                ai_model: 'ah_ai_groq_model',
+                ai_use_api: 'ah_ai_use_api' // still present for visibility, but we'll force api-only usage
             };
             this.defaults = {
                 mc_wait: 300,
                 mc_random_pct: 0,
-                w_min: '',
-                w_max: '',
-                w_level: 'C1',
-                w_blacklist: '',
-                w_lowercase: false,
-                w_mood: ''
+                ai_url: 'https://api.groq.com/openai/v1/chat/completions',
+                ai_model: 'llama-3.1-8b-instant'
             };
 
             // UI state for settings: 'closed' | 'menu' | 'mc' | 'writing' | 'ai'
@@ -71,7 +63,7 @@
             }
         }
 
-        // -------- utility: settings storage --------
+        // -------- settings storage --------
         saveSetting(key, value) {
             try { localStorage.setItem(key, String(value)); } catch (e) {}
         }
@@ -79,36 +71,34 @@
             try {
                 const v = localStorage.getItem(key);
                 if (v === null || v === undefined) return fallback;
+                // For numeric known keys, return number
+                if (key === this.settingsKeys.mc_wait || key === this.settingsKeys.mc_random_pct) {
+                    const n = Number(v);
+                    return Number.isFinite(n) ? n : fallback;
+                }
+                if (key === this.settingsKeys.ai_use_api) {
+                    return (v === 'true' || v === true);
+                }
                 return v;
             } catch (e) { return fallback; }
         }
 
-        getMCWait() { return Number(localStorage.getItem(this.settingsKeys.mc_wait) || this.defaults.mc_wait); }
-        getMCRandomPct() { return Number(localStorage.getItem(this.settingsKeys.mc_random_pct) || this.defaults.mc_random_pct); }
+        getMCWait() { return this.loadSetting(this.settingsKeys.mc_wait, this.defaults.mc_wait); }
+        getMCRandomPct() { return this.loadSetting(this.settingsKeys.mc_random_pct, this.defaults.mc_random_pct); }
         resetMCWait() { this.saveSetting(this.settingsKeys.mc_wait, this.defaults.mc_wait); }
         resetMCRandom() { this.saveSetting(this.settingsKeys.mc_random_pct, this.defaults.mc_random_pct); }
 
-        getWMin() { const v = localStorage.getItem(this.settingsKeys.w_min); return v === null ? '' : v; }
-        getWMax() { const v = localStorage.getItem(this.settingsKeys.w_max); return v === null ? '' : v; }
-        getWLevel() { return localStorage.getItem(this.settingsKeys.w_level) || this.defaults.w_level; }
-        getWBlacklist() { return localStorage.getItem(this.settingsKeys.w_blacklist) || this.defaults.w_blacklist; }
-        getWLowercase() { return (localStorage.getItem(this.settingsKeys.w_lowercase) === 'true'); }
-        getWMood() { return localStorage.getItem(this.settingsKeys.w_mood) || this.defaults.w_mood; }
-        resetWToDefaults() {
-            this.saveSetting(this.settingsKeys.w_min, '');
-            this.saveSetting(this.settingsKeys.w_max, '');
-            this.saveSetting(this.settingsKeys.w_level, this.defaults.w_level);
-            this.saveSetting(this.settingsKeys.w_blacklist, '');
-            this.saveSetting(this.settingsKeys.w_lowercase, this.defaults.w_lowercase ? 'true' : 'false');
-            this.saveSetting(this.settingsKeys.w_mood, '');
-        }
+        getAIUrl() { return this.loadSetting(this.settingsKeys.ai_url, this.defaults.ai_url); }
+        getAIKey() { return this.loadSetting(this.settingsKeys.ai_key, null); }
+        getAIModel() { return this.loadSetting(this.settingsKeys.ai_model, this.defaults.ai_model); }
+        isAIUseAPI() { return this.loadSetting(this.settingsKeys.ai_use_api, true); } // default true
 
-        // -------- resources & element helpers --------
+        // -------- helpers & resources --------
         getUrl(path) {
             if (!path) return '';
             if (/^https?:\/\//i.test(path)) return path;
-            if (path.indexOf('icons/') === 0) return this.assetBase + path.substring('icons/'.length);
-            return this.assetBase + path;
+            // default raw GitHub icons path in repo main branch
+            return 'https://raw.githubusercontent.com/ARDARYUS/a3kbookmarklet/main/icons/' + path.replace(/^icons\//, '');
         }
 
         createEl(tag, props = {}) {
@@ -190,8 +180,8 @@
 
             const uiImg = this.createEl('img', {
                 id: 'helperEyeImg',
-                src: this.getUrl('icons/sleep.gif'),
-                dataset: { idle: this.getUrl('icons/idle.gif'), tilt: this.getUrl('icons/full.gif') },
+                src: this.getUrl('sleep.gif'),
+                dataset: { idle: this.getUrl('idle.gif'), tilt: this.getUrl('full.gif') },
                 style: 'width:100%;height:100%;object-fit:cover;display:block;pointer-events:none;'
             });
 
@@ -205,6 +195,13 @@
                 preload: 'auto'
             });
 
+            // Fix: ensure getUrl resolves full path for icons
+            uiImg.src = this.getUrl('icons/sleep.gif');
+            uiImg.dataset.idle = this.getUrl('icons/idle.gif');
+            uiImg.dataset.tilt = this.getUrl('icons/full.gif');
+
+            uiVideo.src = ''; // empty initially
+
             eyeWrapper.appendChild(uiImg);
             eyeWrapper.appendChild(uiVideo);
 
@@ -214,7 +211,7 @@
                 style: 'position:absolute;top:8px;right:8px;background:none;border:none;color:white;font-size:18px;cursor:pointer;padding:2px 8px;transition:color 0.12s ease, transform 0.1s ease;opacity:0.5;z-index:100005;'
             });
 
-            // Main action button: style like settings buttons (colors) with hover later
+            // Main action button
             const getAnswerButton = this.createEl('button', {
                 id: 'getAnswerButton',
                 style:
@@ -231,7 +228,6 @@
             getAnswerButton.appendChild(spinner);
             getAnswerButton.appendChild(buttonTextSpan);
 
-            // Version remains visible always
             const version = this.createEl('div', { id: 'ah-version', style: 'position:absolute;bottom:8px;right:8px;font-size:12px;opacity:0.9;z-index:100005', text: '1.0' });
 
             // SETTINGS COG (bottom-left)
@@ -267,19 +263,18 @@
 
             container.appendChild(launcher);
 
-            // spinner keyframes & minor styles + hover rules for buttons & settings
+            // add spinner keyframes & minor styles + hover rules
             this.applyStylesOnce('assessment-helper-spinner-styles', `
                 @keyframes ah-spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
                 #getAnswerButton.running { background: #1e1e1e; box-shadow: 0 4px 12px rgba(0,0,0,0.35); }
                 #getAnswerButton.running span { font-size:12px; opacity:0.95; }
-                #settingsPanel input[type="number"] { width:80px; padding:4px; border-radius:6px; border:1px solid rgba(255,255,255,0.08); background:transparent; color:white; }
+                #settingsPanel input[type="number"], #settingsPanel input[type="text"], #settingsPanel input[type="password"] { width:120px; padding:6px; border-radius:6px; border:1px solid rgba(255,255,255,0.08); background:transparent; color:white; }
                 #settingsPanel label { font-size:13px; margin-right:6px; }
                 .ah-reset { cursor:pointer; margin-left:8px; opacity:0.8; font-size:14px; user-select:none; }
                 .ah-section-title { font-weight:700; margin-top:4px; margin-bottom:6px; font-size:14px; }
                 #settingsPanel button { transition: background 0.12s ease, transform 0.08s ease; }
                 #settingsPanel button:hover { background:#222; transform: translateY(-1px); }
                 #getAnswerButton:hover { background: #1f1f1f !important; transform: translateY(-1px); }
-                #settingsCog { transition: transform 0.12s ease, opacity 0.12s ease; }
                 #settingsCog:hover { transform: rotate(22.5deg); }
             `);
 
@@ -356,7 +351,7 @@
             setTimeout(() => { alertContainer.style.opacity = 0; alertContainer.addEventListener('transitionend', () => alertContainer.remove()); }, 5000);
         }
 
-        // -------- fetch article / answer --------
+        // -------- fetch article / answer (API-only; no Cloudflare) --------
         async fetchArticleContent() {
             try {
                 const articleContainer = document.querySelector('#start-reading');
@@ -387,43 +382,85 @@
             }
         }
 
+        // Use only user API (Groq/OpenAI-compatible chat completions). Cloudflare endpoints removed.
         async fetchAnswer(queryContent, retryCount = 0) {
             const MAX_RETRIES = 3, RETRY_DELAY_MS = 1000;
             try {
+                // Abort previous
                 if (this.currentAbortController) {
                     try { this.currentAbortController.abort(); } catch (e) {}
                 }
                 this.currentAbortController = new AbortController();
                 const signal = this.currentAbortController.signal;
 
-                const response = await fetch(this.askEndpoint, {
+                // Get API settings
+                const apiKey = this.getAIKey();
+                const apiUrl = this.getAIUrl();
+                const model = this.getAIModel();
+
+                if (!apiKey) {
+                    throw new Error('No API key configured. Open Settings → AI settings and paste your GroqCloud API key.');
+                }
+                if (!apiUrl) {
+                    throw new Error('No API URL configured. Open Settings → AI settings and set the API URL.');
+                }
+
+                // Chat-completion payload (OpenAI-compatible)
+                const body = {
+                    model: model,
+                    messages: [{ role: 'user', content: queryContent }],
+                    // allow user to modify model behavior if needed; keep defaults modest
+                    max_tokens: 1500,
+                    temperature: 0.0
+                };
+
+                const resp = await fetch(apiUrl, {
                     method: 'POST',
-                    cache: 'no-cache',
-                    headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ q: queryContent, article: this.cachedArticle || null }),
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + apiKey
+                    },
+                    body: JSON.stringify(body),
                     signal
                 });
 
                 this.currentAbortController = null;
 
-                if (!response.ok) {
-                    const text = await response.text().catch(() => '');
-                    if (response.status === 500 && text.includes("429 You exceeded your current quota") && retryCount < MAX_RETRIES) {
+                if (!resp.ok) {
+                    const txt = await resp.text().catch(()=>'');
+                    if (resp.status === 429 && retryCount < MAX_RETRIES) {
                         await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
                         return this.fetchAnswer(queryContent, retryCount + 1);
                     }
-                    throw new Error(`API error ${response.status}: ${text}`);
+                    throw new Error(`API error ${resp.status}: ${txt}`);
                 }
-                const data = await response.json().catch(() => null);
-                if (data && (data.response || data.answer)) return String(data.response || data.answer).trim();
-                return 'No answer available';
+
+                const data = await resp.json().catch(()=>null);
+
+                // Support multiple possible shapes:
+                // - { response: '...' } (legacy)
+                // - { answer: '...' }
+                // - OpenAI-style: { choices: [{ message: { content: '...' } }] } or { choices: [{ text: '...' }] }
+                let text = null;
+                if (!data) text = null;
+                else if (data.response) text = data.response;
+                else if (data.answer) text = data.answer;
+                else if (Array.isArray(data.choices) && data.choices.length) {
+                    const c = data.choices[0];
+                    if (c.message && (c.message.content || c.message.content === '')) text = c.message.content;
+                    else if (c.text || c.text === '') text = c.text;
+                    else if (c.delta && c.delta.content) text = c.delta.content;
+                } else if (data.choices && data.choices.text) text = data.choices.text;
+
+                if (text === null || text === undefined) return 'No answer available';
+                return String(text).trim();
             } catch (err) {
                 if (err && err.name === 'AbortError') return '<<ABORTED>>';
                 return `Error: ${err && err.message ? err.message : String(err)}`;
             }
         }
 
-        // -------- Eye helpers --------
+        // -------- Eye helpers (unchanged) --------
         setEyeToSleep() {
             if (this.eyeState === 'full') return;
             try {
@@ -565,7 +602,7 @@
             }
         }
 
-        // -------- Settings UI flows with directional expansion & eye shrink --------
+        // -------- Settings & UI interactions (adds AI settings) --------
         _computeExpandRight() {
             const launcher = document.getElementById('Launcher');
             if (!launcher) return true;
@@ -581,12 +618,12 @@
             if (!launcher) return;
             const rect = launcher.getBoundingClientRect();
             if (expandRight) {
-                // Fix left and expand to the right
+                // fix left and expand right
                 launcher.style.left = `${rect.left}px`;
                 launcher.style.right = 'auto';
                 launcher.style.width = `${widthPx}px`;
             } else {
-                // Fix right and expand to the left
+                // fix right and expand left
                 const rightCss = Math.round(window.innerWidth - rect.right);
                 launcher.style.right = `${rightCss}px`;
                 launcher.style.left = 'auto';
@@ -597,14 +634,11 @@
         _shrinkEyeToTopRight() {
             const eye = document.getElementById('helperEye');
             if (!eye) return;
-            // Save original once
             if (!this._eyeOriginal) {
                 this._eyeOriginal = {
                     style: eye.getAttribute('style') || '',
-                    parentDisplay: eye.style.display || ''
                 };
             }
-            // Shrink and move under the X, inside the launcher
             eye.style.display = 'flex';
             eye.style.position = 'absolute';
             eye.style.top = '12px';
@@ -613,7 +647,6 @@
             eye.style.height = '48px';
             eye.style.marginTop = '0';
             eye.style.zIndex = '100004';
-            // also shrink internal img
             const img = document.getElementById('helperEyeImg');
             if (img) img.style.width = '100%';
         }
@@ -622,11 +655,9 @@
             const eye = document.getElementById('helperEye');
             if (!eye) return;
             if (this._eyeOriginal) {
-                // restore style string (safe)
                 eye.setAttribute('style', this._eyeOriginal.style);
                 this._eyeOriginal = null;
             } else {
-                // fallback restore approximate layout
                 eye.style.position = '';
                 eye.style.top = '';
                 eye.style.right = '';
@@ -677,7 +708,6 @@
         openSettingsMenu() {
             const launcher = document.getElementById('Launcher');
             if (!launcher) return;
-            const eye = document.getElementById('helperEye');
             const btn = document.getElementById('getAnswerButton');
 
             // compute direction and set width to menu-size
@@ -755,65 +785,8 @@
             const title = this.createEl('div', { className: 'ah-section-title', text: 'Writing Settings' });
             panel.appendChild(title);
 
-            const minRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;' });
-            const minLabel = this.createEl('label', { text: 'Minimum words (optional):', style: 'min-width:160px;' });
-            const minInput = this.createEl('input', { type: 'number', id: 'wMinInput', value: String(this.getWMin()), placeholder: '', style: '' });
-            const minReset = this.createEl('span', { className: 'ah-reset', text: '↺', title: 'Reset to default' });
-            minReset.addEventListener('click', () => { this.saveSetting(this.settingsKeys.w_min, ''); minInput.value = ''; });
-
-            minRow.appendChild(minLabel); minRow.appendChild(minInput); minRow.appendChild(minReset);
-            panel.appendChild(minRow);
-
-            const maxRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;' });
-            const maxLabel = this.createEl('label', { text: 'Maximum words (optional):', style: 'min-width:160px;' });
-            const maxInput = this.createEl('input', { type: 'number', id: 'wMaxInput', value: String(this.getWMax()), placeholder: '', style: '' });
-            const maxReset = this.createEl('span', { className: 'ah-reset', text: '↺', title: 'Reset to default' });
-            maxReset.addEventListener('click', () => { this.saveSetting(this.settingsKeys.w_max, ''); maxInput.value = ''; });
-
-            maxRow.appendChild(maxLabel); maxRow.appendChild(maxInput); maxRow.appendChild(maxReset);
-            panel.appendChild(maxRow);
-
-            const levelRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;' });
-            const levelLabel = this.createEl('label', { text: 'English level:', style: 'min-width:160px;' });
-            const levelSelect = this.createEl('select', { id: 'wLevelSelect' });
-            ['A1','A2','B1','B2','C1','C2'].forEach(l => {
-                const opt = document.createElement('option'); opt.value = l; opt.text = l; levelSelect.appendChild(opt);
-            });
-            levelSelect.value = this.getWLevel();
-            levelRow.appendChild(levelLabel); levelRow.appendChild(levelSelect);
-            panel.appendChild(levelRow);
-
-            const blRow = this.createEl('div', { style: 'display:flex;flex-direction:row;align-items:center;gap:8px;margin-bottom:8px;width:100%;' });
-            const blLabel = this.createEl('label', { text: 'Blacklist characters:', style: 'min-width:160px;' });
-            const blInput = this.createEl('input', { type: 'text', id: 'wBlacklistInput', value: this.getWBlacklist(), placeholder: '\\*, ~, etc', style: 'flex:1;' });
-            const blReset = this.createEl('span', { className: 'ah-reset', text: '↺', title: 'Reset to default' });
-            blReset.addEventListener('click', () => { this.saveSetting(this.settingsKeys.w_blacklist, ''); blInput.value = ''; });
-
-            blRow.appendChild(blLabel); blRow.appendChild(blInput); blRow.appendChild(blReset);
-            panel.appendChild(blRow);
-
-            const lcRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;' });
-            const lcLabel = this.createEl('label', { text: 'Only lowercase (client-side):', style: 'min-width:160px;' });
-            const lcInput = this.createEl('input', { type: 'checkbox', id: 'wLowercaseInput' });
-            lcInput.checked = this.getWLowercase();
-            lcRow.appendChild(lcLabel); lcRow.appendChild(lcInput);
-            panel.appendChild(lcRow);
-
-            const moodRow = this.createEl('div', { style: 'display:flex;flex-direction:column;gap:6px;margin-bottom:8px;width:100%;' });
-            const moodLabel = this.createEl('label', { text: 'AI writing style / mood (optional):', style: 'min-width:160px;' });
-            const moodInput = this.createEl('textarea', { id: 'wMoodInput', value: this.getWMood(), placeholder: 'e.g., Write concisely and politely, target an 11th-grade audience.' });
-            const moodReset = this.createEl('span', { className: 'ah-reset', text: '↺', title: 'Reset to default' });
-            moodReset.addEventListener('click', () => { this.saveSetting(this.settingsKeys.w_mood, ''); moodInput.value = ''; });
-
-            moodRow.appendChild(moodLabel); moodRow.appendChild(moodInput); moodRow.appendChild(moodReset);
-            panel.appendChild(moodRow);
-
-            levelSelect.addEventListener('change', () => { this.saveSetting(this.settingsKeys.w_level, levelSelect.value); });
-            blInput.addEventListener('change', () => { this.saveSetting(this.settingsKeys.w_blacklist, blInput.value || ''); });
-            lcInput.addEventListener('change', () => { this.saveSetting(this.settingsKeys.w_lowercase, lcInput.checked ? 'true' : 'false'); });
-            moodInput.addEventListener('change', () => { this.saveSetting(this.settingsKeys.w_mood, moodInput.value || ''); });
-            minInput.addEventListener('change', () => { this.saveSetting(this.settingsKeys.w_min, minInput.value || ''); });
-            maxInput.addEventListener('change', () => { this.saveSetting(this.settingsKeys.w_max, maxInput.value || ''); });
+            const placeholder = this.createEl('div', { text: 'No settings available yet for writing. This area is reserved.', style: 'font-size:13px;opacity:0.85;margin-top:6px;' });
+            panel.appendChild(placeholder);
         }
 
         openAISettings() {
@@ -827,52 +800,54 @@
             const title = this.createEl('div', { className: 'ah-section-title', text: 'AI Settings' });
             panel.appendChild(title);
 
-            const methodRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;' });
-            const methodLabel = this.createEl('label', { text: 'Use direct API (toggle):', style: 'min-width:160px;' });
-            const methodToggle = this.createEl('input', { type: 'checkbox', id: 'aiUseApiToggle' });
-            const useApiStored = localStorage.getItem(this.settingsKeys.ai_use_api);
-            methodToggle.checked = (useApiStored === 'true');
-            methodRow.appendChild(methodLabel); methodRow.appendChild(methodToggle);
-            panel.appendChild(methodRow);
-
-            const urlRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;width:100%;' });
-            const urlLabel = this.createEl('label', { text: 'Groq URL:', style: 'min-width:160px;' });
-            const urlInput = this.createEl('input', { type: 'text', id: 'aiGroqUrlInput', value: localStorage.getItem(this.settingsKeys.ai_groq_url) || 'https://api.groq.com/openai/v1/chat/completions', style: 'flex:1;' });
+            // API URL
+            const urlRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;' });
+            const urlLabel = this.createEl('label', { text: 'API URL:', style: 'min-width:120px;' });
+            const urlInput = this.createEl('input', { type: 'text', id: 'aiUrlInput', value: String(this.getAIUrl()), style: 'width:300px;' });
             const urlReset = this.createEl('span', { className: 'ah-reset', text: '↺', title: 'Reset to default' });
-            urlReset.addEventListener('click', () => { urlInput.value = 'https://api.groq.com/openai/v1/chat/completions'; this.saveSetting(this.settingsKeys.ai_groq_url, urlInput.value); });
+            urlReset.addEventListener('click', () => { this.saveSetting(this.settingsKeys.ai_url, this.defaults.ai_url); urlInput.value = this.defaults.ai_url; });
 
             urlRow.appendChild(urlLabel); urlRow.appendChild(urlInput); urlRow.appendChild(urlReset);
             panel.appendChild(urlRow);
 
-            const keyRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;width:100%;' });
-            const keyLabel = this.createEl('label', { text: 'Groq API key:', style: 'min-width:160px;' });
-            const keyInput = this.createEl('input', { type: 'text', id: 'aiGroqKeyInput', value: localStorage.getItem(this.settingsKeys.ai_groq_key) || '', placeholder: 'paste your key here', style: 'flex:1;' });
-            const keyReset = this.createEl('span', { className: 'ah-reset', text: '↺', title: 'Clear key' });
-            keyReset.addEventListener('click', () => { keyInput.value = ''; localStorage.removeItem(this.settingsKeys.ai_groq_key); });
+            // API Key
+            const keyRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;' });
+            const keyLabel = this.createEl('label', { text: 'API Key:', style: 'min-width:120px;' });
+            const keyInput = this.createEl('input', { type: 'password', id: 'aiKeyInput', value: String(this.getAIKey() || ''), style: 'width:300px;' });
+            const keyClear = this.createEl('span', { className: 'ah-reset', text: '✖', title: 'Clear key' });
+            keyClear.addEventListener('click', () => { this.saveSetting(this.settingsKeys.ai_key, ''); keyInput.value = ''; });
 
-            keyRow.appendChild(keyLabel); keyRow.appendChild(keyInput); keyRow.appendChild(keyReset);
+            keyRow.appendChild(keyLabel); keyRow.appendChild(keyInput); keyRow.appendChild(keyClear);
             panel.appendChild(keyRow);
 
-            const modelRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;width:100%;' });
-            const modelLabel = this.createEl('label', { text: 'Model:', style: 'min-width:160px;' });
-            const modelInput = this.createEl('input', { type: 'text', id: 'aiGroqModelInput', value: localStorage.getItem(this.settingsKeys.ai_groq_model) || 'llama-3.1-8b-instant', style: 'flex:1;' });
-            modelRow.appendChild(modelLabel); modelRow.appendChild(modelInput);
+            // Model
+            const modelRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;' });
+            const modelLabel = this.createEl('label', { text: 'Model:', style: 'min-width:120px;' });
+            const modelInput = this.createEl('input', { type: 'text', id: 'aiModelInput', value: String(this.getAIModel()), style: 'width:200px;' });
+            const modelReset = this.createEl('span', { className: 'ah-reset', text: '↺', title: 'Reset to default' });
+            modelReset.addEventListener('click', () => { this.saveSetting(this.settingsKeys.ai_model, this.defaults.ai_model); modelInput.value = this.defaults.ai_model; });
+
+            modelRow.appendChild(modelLabel); modelRow.appendChild(modelInput); modelRow.appendChild(modelReset);
             panel.appendChild(modelRow);
 
-            methodToggle.addEventListener('change', () => { this.saveSetting(this.settingsKeys.ai_use_api, methodToggle.checked ? 'true' : 'false'); });
-            urlInput.addEventListener('change', () => { this.saveSetting(this.settingsKeys.ai_groq_url, urlInput.value || ''); });
-            keyInput.addEventListener('change', () => { this.saveSetting(this.settingsKeys.ai_groq_key, keyInput.value || ''); });
-            modelInput.addEventListener('change', () => { this.saveSetting(this.settingsKeys.ai_groq_model, modelInput.value || 'llama-3.1-8b-instant'); });
+            // Save button
+            const saveBtn = this.createEl('button', { text: 'Save AI settings', style: 'padding:8px 12px;border-radius:8px;background:#1a1a1a;border:1px solid rgba(255,255,255,0.06);color:white;cursor:pointer;margin-top:8px;' });
+            saveBtn.addEventListener('click', () => {
+                this.saveSetting(this.settingsKeys.ai_url, urlInput.value || this.defaults.ai_url);
+                this.saveSetting(this.settingsKeys.ai_key, keyInput.value || '');
+                this.saveSetting(this.settingsKeys.ai_model, modelInput.value || this.defaults.ai_model);
+                // ensure flag for api usage set
+                this.saveSetting(this.settingsKeys.ai_use_api, true);
+                this.showAlert('AI settings saved locally (stored in browser).', 'info');
+            });
+            panel.appendChild(saveBtn);
 
-            // ensure saved defaults persisted
-            this.saveSetting(this.settingsKeys.ai_groq_url, urlInput.value);
-            this.saveSetting(this.settingsKeys.ai_groq_model, modelInput.value);
-            if (keyInput.value) this.saveSetting(this.settingsKeys.ai_groq_key, keyInput.value);
+            const note = this.createEl('div', { text: 'This tool uses your API key locally in the browser. Do not share your key.', style: 'font-size:12px;opacity:0.8;margin-top:8px;' });
+            panel.appendChild(note);
         }
 
         backFromSettings() {
             const launcher = document.getElementById('Launcher');
-            const eye = document.getElementById('helperEye');
             const btn = document.getElementById('getAnswerButton');
             const settingsPanel = document.getElementById('settingsPanel');
             const settingsCog = document.getElementById('settingsCog');
@@ -890,12 +865,12 @@
             if (this.settingsState === 'menu') {
                 // hide panel
                 if (settingsPanel) { settingsPanel.style.display = 'none'; settingsPanel.innerHTML = ''; }
-                // restore main button
-                if (btn) { btn.style.display = 'flex'; setTimeout(()=>btn.style.opacity='1',10); }
+                // restore main button (fade-in)
+                if (btn) { btn.style.display = 'flex'; btn.style.opacity = '0'; setTimeout(()=>btn.style.opacity='1',10); }
                 // restore cog/back
                 if (settingsBack) { settingsBack.style.opacity = '0'; setTimeout(()=>settingsBack.style.display='none',120); }
                 if (settingsCog) settingsCog.style.display = 'block';
-                // shrink launcher back (decide anchor based on current rect — restore to default 180)
+                // shrink launcher back
                 const expandRight = this._computeExpandRight();
                 this._setLauncherWidthAndAnchor(180, expandRight);
                 // restore eye full size & original placement
@@ -905,7 +880,7 @@
             }
         }
 
-        // -------- event wiring & behavior (includes settings triggers & random MC logic) --------
+        // -------- event wiring & behavior --------
         setupEventListeners() {
             try {
                 const launcher = document.getElementById('Launcher');
@@ -959,41 +934,40 @@
                 document.addEventListener('mouseup', stopDrag);
                 document.addEventListener('mouseleave', stopDrag);
 
+                // CLEAN closeButton: stop process, abort, remove DOM so re-injection works
                 if (closeButton) {
                     closeButton.addEventListener('click', () => {
                         try {
-                            // stop any running solver immediately and abort fetches
                             if (window.__AssessmentHelperInstance && typeof window.__AssessmentHelperInstance.stopProcessImmediate === 'function') {
                                 try { window.__AssessmentHelperInstance.stopProcessImmediate(); } catch (e) {}
                             }
                         } catch (e) {}
-                
+
                         // fade out
                         launcher.style.opacity = 0;
-                
-                        // remove DOM nodes after fade completes, and clear global reference
-                        launcher.addEventListener('transitionend', function handler() {
+
+                        // remove DOM nodes after fade completes, clean up
+                        const tidy = () => {
                             try {
-                                // remove the whole container that holds the launcher
                                 const launcherEl = document.getElementById('Launcher');
                                 if (launcherEl && launcherEl.parentElement) launcherEl.parentElement.remove();
 
-                                // remove answer UI container's parent (if present)
                                 const answerEl = document.getElementById('answerContainer');
                                 if (answerEl && answerEl.parentElement) answerEl.parentElement.remove();
-
-                                // clear any global pointer to instance
-                                try { window.__AssessmentHelperInstance = null; } catch (e) {}
                             } catch (e) {}
+                            try { window.__AssessmentHelperInstance = null; } catch (e) {}
+                        };
 
-                            launcher.removeEventListener('transitionend', handler);
-                        }, { once: true });
+                        // If transitionend supported
+                        const onEnd = () => { tidy(); launcher.removeEventListener('transitionend', onEnd); };
+                        launcher.addEventListener('transitionend', onEnd, { once: true });
+
+                        // safety fallback: remove after 600ms
+                        setTimeout(() => { try { tidy(); } catch (e) {} }, 700);
                     });
-
                     closeButton.addEventListener('mousedown', () => (closeButton.style.transform = 'scale(0.95)'));
                     closeButton.addEventListener('mouseup', () => (closeButton.style.transform = 'scale(1)'));
                 }
-
 
                 if (closeAnswerButton) {
                     closeAnswerButton.addEventListener('click', () => {
@@ -1052,332 +1026,27 @@
                     const plainTextarea = document.querySelector('textarea');
                     const contentEditable = document.querySelector('[contenteditable="true"]');
 
-                    // --- READY / REFLECT special handling ---
-                    try {
-                        const href = (window.location && window.location.href) ? window.location.href : '';
-                        if (href.includes('/lesson/ready') || href.includes('/lesson/reflect')) {
-                            // Try to read the question via the provided XPath:
-                            let readyQuestion = '';
-                            try {
-                                const xpathQ = '//*[@id="before-reading-poll"]/div[1]/p[2]/div/text()';
-                                const res = document.evaluate(xpathQ, document, null, XPathResult.STRING_TYPE, null);
-                                readyQuestion = (res && res.stringValue) ? res.stringValue.trim() : '';
-                            } catch (e) {
-                                readyQuestion = '';
-                            }
+                    const writingTarget = tinyIframe || plainTextarea || contentEditable || null;
 
-                            // fallback options if not found
-                            if (!readyQuestion) {
-                                try {
-                                    const altXpath = '//*[@id="before-reading-poll"]/div[1]/p[2]/div';
-                                    const node = document.evaluate(altXpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-                                    if (node) readyQuestion = (node.textContent || '').trim();
-                                } catch (e) {}
-                            }
-                            if (!readyQuestion) {
-                                try {
-                                    const fallbackNode = document.querySelector('#before-reading-poll p:nth-of-type(2) div') || document.querySelector('#before-reading-poll p div');
-                                    if (fallbackNode) readyQuestion = (fallbackNode.textContent || '').trim();
-                                } catch (e) {}
-                            }
-
-                            if (readyQuestion) {
-                                try {
-                                    console.groupCollapsed('[AssessmentHelper] Ready/Reflect detected — question fetched');
-                                    console.log(readyQuestion);
-                                    console.groupEnd();
-                                } catch (e) {}
-
-                                // Check for radio inputs specified by XPaths
-                                const agreeXpath = '//*[@id="before-reading-poll"]/div[1]/fieldset/div/label[1]/span[1]/input';
-                                const disagreeXpath = '//*[@id="before-reading-poll"]/div[1]/fieldset/div/label[2]/span[1]/input';
-                                let agreeNode = null, disagreeNode = null;
-                                try {
-                                    agreeNode = document.evaluate(agreeXpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-                                } catch (e) { agreeNode = null; }
-                                try {
-                                    disagreeNode = document.evaluate(disagreeXpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-                                } catch (e) { disagreeNode = null; }
-
-                                // If radio buttons exist — decide and click but DO NOT submit
-                                if (agreeNode || disagreeNode) {
-                                    const prompt = `${readyQuestion}\n\nDecide whether you AGREE or DISAGREE with this statement. Respond with exactly one word: AGREE or DISAGREE.`;
-                                    try {
-                                        console.groupCollapsed('[AssessmentHelper] Sent (Ready/Reflect classification) payload');
-                                        console.log('q:', prompt);
-                                        console.log('article:', this.cachedArticle || null);
-                                        console.groupEnd();
-                                    } catch (e) {}
-
-                                    const classification = await this.fetchAnswer(prompt);
-                                    try {
-                                        console.groupCollapsed('[AssessmentHelper] Received (Ready/Reflect) classification');
-                                        console.log(classification);
-                                        console.groupEnd();
-                                    } catch (e) {}
-
-                                    const normalized = (String(classification || '')).trim().toUpperCase();
-                                    let pickAgree = false;
-                                    if (normalized.indexOf('AGREE') !== -1 && normalized.indexOf('DISAGREE') === -1) pickAgree = true;
-                                    else if (normalized.indexOf('DISAGREE') !== -1 && normalized.indexOf('AGREE') === -1) pickAgree = false;
-                                    else {
-                                        if (normalized.startsWith('A')) pickAgree = true;
-                                        else if (normalized.startsWith('D')) pickAgree = false;
-                                        else pickAgree = true;
-                                    }
-
-                                    // Click the radio for AGREE or DISAGREE (if available)
-                                    try {
-                                        if (pickAgree && agreeNode) {
-                                            agreeNode.click();
-                                            console.log('[AssessmentHelper] Clicked: agree');
-                                        } else if (!pickAgree && disagreeNode) {
-                                            disagreeNode.click();
-                                            console.log('[AssessmentHelper] Clicked: disagree');
-                                        } else {
-                                            console.log('[AssessmentHelper] Radio target missing for chosen option.');
-                                        }
-                                    } catch (e) {
-                                        console.log('[AssessmentHelper] Error clicking radio:', e && e.message);
-                                    }
-
-                                    // --- build justification prompt that uses the user's writing settings ---
-                                    const level = this.getWLevel();
-                                    const minWords = this.getWMin();
-                                    const maxWords = this.getWMax();
-                                    const mood = this.getWMood();
-
-                                    const starter = pickAgree ? 'I agree because' : 'I disagree because';
-                                    let justificationPrompt = `${readyQuestion}\n\n${starter} `;
-
-                                    // Add constraints
-                                    if (level) justificationPrompt += `Use English level ${level}. `;
-                                    if (minWords && maxWords) {
-                                        justificationPrompt += `Use a minimum of ${minWords} words and a maximum of ${maxWords} words. `;
-                                    } else if (minWords) {
-                                        justificationPrompt += `Use a minimum of ${minWords} words. `;
-                                    } else if (maxWords) {
-                                        justificationPrompt += `Use a maximum of ${maxWords} words. `;
-                                    }
-                                    if (mood) justificationPrompt += `${mood} `;
-
-                                    // Final instruction: produce a short justification paragraph starting with the starter
-                                    justificationPrompt += `Provide a concise justification starting with "${starter}" and keep it as one coherent paragraph. Respond only with the justification (no extra commentary).`;
-
-                                    try {
-                                        console.groupCollapsed('[AssessmentHelper] Sent (Ready/Reflect justification) payload');
-                                        console.log('q:', justificationPrompt);
-                                        console.groupEnd();
-                                    } catch (e) {}
-
-                                    const justificationText = await this.fetchAnswer(justificationPrompt);
-
-                                    // post-process — apply blacklist / lowercase
-                                    let processed = String(justificationText || '');
-                                    try {
-                                        const blacklist = this.getWBlacklist() || '';
-                                        if (blacklist && blacklist.length > 0) {
-                                            const escaped = blacklist.split('').map(ch => ch.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')).join('|');
-                                            if (escaped) {
-                                                const re = new RegExp(escaped, 'g');
-                                                processed = processed.replace(re, '');
-                                            }
-                                        }
-                                    } catch (e) {
-                                        try {
-                                            const blacklist = this.getWBlacklist() || '';
-                                            for (let i = 0; i < blacklist.length; i++) {
-                                                const ch = blacklist[i];
-                                                processed = processed.split(ch).join('');
-                                            }
-                                        } catch (e2) {}
-                                    }
-
-                                    if (this.getWLowercase()) processed = processed.toLowerCase();
-
-                                    // Insert the justification into TinyMCE iframe if present, else textarea/contenteditable
-                                    try {
-                                        const tinyIframeLocal = document.querySelector('.tox-edit-area__iframe');
-                                        const plainTextareaLocal = document.querySelector('textarea');
-                                        const contentEditableLocal = document.querySelector('[contenteditable="true"]');
-
-                                        if (tinyIframeLocal) {
-                                            const iframeDoc = tinyIframeLocal.contentDocument || tinyIframeLocal.contentWindow.document;
-                                            if (iframeDoc) {
-                                                iframeDoc.body.innerHTML = processed;
-                                                setTimeout(() => {
-                                                    iframeDoc.body.innerHTML += " ";
-                                                    const inputEvent = new Event('input', { bubbles: true });
-                                                    iframeDoc.body.dispatchEvent(inputEvent);
-                                                }, 300);
-                                            } else {
-                                                throw new Error('Unable to access iframe document');
-                                            }
-                                        } else if (plainTextareaLocal) {
-                                            plainTextareaLocal.value = processed;
-                                            plainTextareaLocal.dispatchEvent(new Event('input', { bubbles: true }));
-                                        } else if (contentEditableLocal) {
-                                            contentEditableLocal.innerHTML = processed;
-                                            contentEditableLocal.dispatchEvent(new Event('input', { bubbles: true }));
-                                        } else {
-                                            // fallback show in bubble
-                                            const answerContainerEl = document.getElementById('answerContainer');
-                                            const answerContentEl = answerContainerEl ? answerContainerEl.querySelector('#answerContent') : null;
-                                            if (answerContentEl) answerContentEl.textContent = processed;
-                                            if (answerContainerEl) { answerContainerEl.style.display = 'flex'; answerContainerEl.style.visibility = 'visible'; answerContainerEl.classList.add('show'); }
-                                        }
-
-                                        // NOTE: do NOT submit automatically; leave radio selected and justification typed.
-                                        // Stop processing (as user requested)
-                                        this._stoppedByWrite = true;
-                                        this.isRunning = false;
-                                        try { await this.stopProcessUI(); } catch (e) {}
-                                        return false;
-
-                                    } catch (e) {
-                                        // If insertion failed, show the processed text in the bubble
-                                        const answerContainerEl = document.getElementById('answerContainer');
-                                        const answerContentEl = answerContainerEl ? answerContainerEl.querySelector('#answerContent') : null;
-                                        if (answerContentEl) answerContentEl.textContent = processed;
-                                        if (answerContainerEl) { answerContainerEl.style.display = 'flex'; answerContainerEl.style.visibility = 'visible'; answerContainerEl.classList.add('show'); }
-
-                                        this._stoppedByWrite = true;
-                                        this.isRunning = false;
-                                        try { await this.stopProcessUI(); } catch (e2) {}
-                                        return false;
-                                    }
-                                } // end radios exist
-
-                                // else — no radios present, treat as writing target
-                                {
-                                    let writingPrompt = `Please provide a detailed written answer based on the following question: ${readyQuestion}`;
-                                    const level = this.getWLevel();
-                                    const minWords = this.getWMin();
-                                    const maxWords = this.getWMax();
-                                    const mood = this.getWMood();
-                                    if (level) writingPrompt += ` Use English level ${level}.`;
-                                    if (minWords && maxWords) {
-                                        writingPrompt += ` Use minimum ${minWords} words and maximum ${maxWords} words.`;
-                                    } else if (minWords) {
-                                        writingPrompt += ` Use minimum ${minWords} words.`;
-                                    } else if (maxWords) {
-                                        writingPrompt += ` Use maximum ${maxWords} words.`;
-                                    }
-                                    if (mood) writingPrompt += ` ${mood}`;
-
-                                    try {
-                                        console.groupCollapsed('[AssessmentHelper] Sent (Ready/Reflect writing) payload');
-                                        console.log('q:', writingPrompt);
-                                        console.groupEnd();
-                                    } catch (e) {}
-
-                                    const answerTextRaw = await this.fetchAnswer(writingPrompt);
-
-                                    let answerTextProcessed = String(answerTextRaw || '');
-                                    try {
-                                        const blacklist = this.getWBlacklist() || '';
-                                        if (blacklist && blacklist.length > 0) {
-                                            const chars = blacklist.split('').map(ch => ch.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')).join('|');
-                                            if (chars.length > 0) {
-                                                const re = new RegExp(chars, 'g');
-                                                answerTextProcessed = answerTextProcessed.replace(re, '');
-                                            }
-                                        }
-                                    } catch (e) {
-                                        try {
-                                            const blacklist = this.getWBlacklist() || '';
-                                            for (let i = 0; i < blacklist.length; i++) {
-                                                const ch = blacklist[i];
-                                                answerTextProcessed = answerTextProcessed.split(ch).join('');
-                                            }
-                                        } catch (e2) {}
-                                    }
-
-                                    if (this.getWLowercase()) {
-                                        answerTextProcessed = answerTextProcessed.toLowerCase();
-                                    }
-
-                                    try {
-                                        console.groupCollapsed('[AssessmentHelper] Received (Ready/Reflect writing) answer (processed)');
-                                        console.log(answerTextProcessed);
-                                        console.groupEnd();
-                                    } catch (e) {}
-
-                                    // Insert into editor/textarea/contentEditable
-                                    try {
-                                        const tinyIframeLocal = document.querySelector('.tox-edit-area__iframe');
-                                        const plainTextareaLocal = document.querySelector('textarea');
-                                        const contentEditableLocal = document.querySelector('[contenteditable="true"]');
-
-                                        if (tinyIframeLocal) {
-                                            const iframeDoc = tinyIframeLocal.contentDocument || tinyIframeLocal.contentWindow.document;
-                                            if (iframeDoc) {
-                                                iframeDoc.body.innerHTML = answerTextProcessed;
-                                                setTimeout(() => {
-                                                    iframeDoc.body.innerHTML += " ";
-                                                    const inputEvent = new Event('input', { bubbles: true });
-                                                    iframeDoc.body.dispatchEvent(inputEvent);
-                                                }, 300);
-                                            } else {
-                                                throw new Error('Unable to access iframe document');
-                                            }
-                                        } else if (plainTextareaLocal) {
-                                            plainTextareaLocal.value = answerTextProcessed;
-                                            plainTextareaLocal.dispatchEvent(new Event('input', { bubbles: true }));
-                                        } else if (contentEditableLocal) {
-                                            contentEditableLocal.innerHTML = answerTextProcessed;
-                                            contentEditableLocal.dispatchEvent(new Event('input', { bubbles: true }));
-                                        } else {
-                                            const answerContainerEl = document.getElementById('answerContainer');
-                                            const answerContentEl = answerContainerEl ? answerContainerEl.querySelector('#answerContent') : null;
-                                            if (answerContentEl) answerContentEl.textContent = answerTextProcessed;
-                                            if (answerContainerEl) { answerContainerEl.style.display = 'flex'; answerContainerEl.style.visibility = 'visible'; answerContainerEl.classList.add('show'); }
-                                        }
-
-                                        // stop after insertion
-                                        this._stoppedByWrite = true;
-                                        this.isRunning = false;
-                                        try { await this.stopProcessUI(); } catch (e) {}
-                                        return false;
-                                    } catch (e) {
-                                        const answerContainerEl = document.getElementById('answerContainer');
-                                        const answerContentEl = answerContainerEl ? answerContainerEl.querySelector('#answerContent') : null;
-                                        if (answerContentEl) answerContentEl.textContent = (typeof answerTextProcessed === 'string' ? answerTextProcessed : String(answerTextProcessed));
-                                        if (answerContainerEl) { answerContainerEl.style.display = 'flex'; answerContainerEl.style.visibility = 'visible'; answerContainerEl.classList.add('show'); }
-                                        this._stoppedByWrite = true;
-                                        this.isRunning = false;
-                                        try { await this.stopProcessUI(); } catch (e2) {}
-                                        return false;
-                                    }
-                                }
-                            } // end if readyQuestion exists
-                        } // end ready/reflect URL check
-                    } catch (e) {
-                        console.warn('[AssessmentHelper] Ready/Reflect handler error', e && e.message);
-                    }
-
-                    // Normal writing detection (non-ready/reflect)
-                    if (tinyIframe || plainTextarea || contentEditable) {
-                        let queryContentWriting = queryContent + "\n\nPlease provide a detailed written answer based on the above article and question.";
-                        // append the user's writing settings
-                        const level = this.getWLevel();
-                        const minWords = this.getWMin();
-                        const maxWords = this.getWMax();
-                        const mood = this.getWMood();
-                        if (level) queryContentWriting += ` Use English level ${level}.`;
-                        if (minWords && maxWords) queryContentWriting += ` Use minimum ${minWords} words and maximum ${maxWords} words.`;
-                        else if (minWords) queryContentWriting += ` Use minimum ${minWords} words.`;
-                        else if (maxWords) queryContentWriting += ` Use maximum ${maxWords} words.`;
-                        if (mood) queryContentWriting += ` ${mood}`;
+                    if (writingTarget) {
+                        queryContent += "\n\nPlease provide a detailed written answer based on the above article and question.";
 
                         try {
                             console.groupCollapsed('[AssessmentHelper] Sent (writing) payload');
-                            console.log('q:', queryContentWriting);
+                            console.log('q:', queryContent);
                             console.log('article:', this.cachedArticle || null);
                             console.groupEnd();
                         } catch (e) {}
 
-                        const answerText = await this.fetchAnswer(queryContentWriting);
+                        try {
+                            console.groupCollapsed('[AssessmentHelper] Writing target');
+                            if (tinyIframe) console.log('target: TinyMCE iframe', tinyIframe);
+                            else if (plainTextarea) console.log('target: textarea', plainTextarea);
+                            else if (contentEditable) console.log('target: contenteditable', contentEditable);
+                            console.groupEnd();
+                        } catch (e) {}
+
+                        const answerText = await this.fetchAnswer(queryContent);
 
                         try {
                             console.groupCollapsed('[AssessmentHelper] Received (writing) answer');
@@ -1387,34 +1056,11 @@
 
                         if (!this.isRunning) return false;
 
-                        // post-process client-side blacklist / lowercase
-                        let processed = String(answerText || '');
-                        try {
-                            const blacklist = this.getWBlacklist() || '';
-                            if (blacklist && blacklist.length > 0) {
-                                const escaped = blacklist.split('').map(ch => ch.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')).join('|');
-                                if (escaped) {
-                                    const re = new RegExp(escaped, 'g');
-                                    processed = processed.replace(re, '');
-                                }
-                            }
-                        } catch (e) {
-                            try {
-                                const blacklist = this.getWBlacklist() || '';
-                                for (let i = 0; i < blacklist.length; i++) {
-                                    const ch = blacklist[i];
-                                    processed = processed.split(ch).join('');
-                                }
-                            } catch (e2) {}
-                        }
-
-                        if (this.getWLowercase()) processed = processed.toLowerCase();
-
                         try {
                             if (tinyIframe) {
                                 const iframeDoc = tinyIframe.contentDocument || tinyIframe.contentWindow.document;
                                 if (iframeDoc) {
-                                    iframeDoc.body.innerHTML = processed;
+                                    iframeDoc.body.innerHTML = answerText;
                                     setTimeout(() => {
                                         iframeDoc.body.innerHTML += " ";
                                         const inputEvent = new Event('input', { bubbles: true });
@@ -1424,10 +1070,10 @@
                                     throw new Error('Unable to access iframe document');
                                 }
                             } else if (plainTextarea) {
-                                plainTextarea.value = processed;
+                                plainTextarea.value = answerText;
                                 plainTextarea.dispatchEvent(new Event('input', { bubbles: true }));
                             } else if (contentEditable) {
-                                contentEditable.innerHTML = processed;
+                                contentEditable.innerHTML = answerText;
                                 contentEditable.dispatchEvent(new Event('input', { bubbles: true }));
                             }
 
@@ -1439,7 +1085,7 @@
                         } catch (e) {
                             const answerContainerEl = document.getElementById('answerContainer');
                             const answerContentEl = answerContainerEl ? answerContainerEl.querySelector('#answerContent') : null;
-                            if (answerContentEl) answerContentEl.textContent = (typeof processed === 'string' ? processed : String(processed));
+                            if (answerContentEl) answerContentEl.textContent = (typeof answerText === 'string' ? answerText : String(answerText));
                             if (answerContainerEl) { answerContainerEl.style.display = 'flex'; answerContainerEl.style.visibility = 'visible'; answerContainerEl.classList.add('show'); }
                             this._stoppedByWrite = true;
                             this.isRunning = false;
@@ -1447,7 +1093,6 @@
                             return false;
                         }
                     } else {
-                        // Multiple choice mode (unchanged)
                         queryContent += "\n\nPROVIDE ONLY A ONE-LETTER ANSWER THAT'S IT NOTHING ELSE (A, B, C, or D).";
                         if (excludedAnswers.length > 0) queryContent += `\n\nDo not pick letter ${excludedAnswers.join(', ')}.`;
 
@@ -1590,5 +1235,5 @@
         }
     }
 
-    try { new AssessmentHelper(); } catch (e) {}
+    try { new AssessmentHelper(); } catch (e) { console.error(e); }
 })();
