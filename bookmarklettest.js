@@ -181,7 +181,10 @@
                 const script = document.createElement('script');
                 script.src = url;
                 script.onload = () => resolve();
-                script.onerror = () => { script.remove(); reject(new Error('Failed to load ' + url)); };
+                script.onerror = () => {
+                    script.remove();
+                    reject(new Error('Failed to load ' + url));
+                };
                 document.head.appendChild(script);
             });
         }
@@ -401,7 +404,7 @@
         }
 
         
-async fetchAnswer(queryContent, retryCount = 0) {
+        async fetchAnswer(queryContent, retryCount = 0) {
             const MAX_RETRIES = 3, RETRY_DELAY_MS = 1000;
             try {
                 if (this.currentAbortController) {
@@ -484,12 +487,7 @@ async fetchAnswer(queryContent, retryCount = 0) {
                 return `Error: ${err && err.message ? err.message : String(err)}`;
             }
         }
- catch (err) {
-                if (err && err.name === 'AbortError') return '<<ABORTED>>';
-                return `Error: ${err && err.message ? err.message : String(err)}`;
-            }
-        }
-
+ 
         // -------- Eye helpers --------
         setEyeToSleep() {
             if (this.eyeState === 'full') return;
