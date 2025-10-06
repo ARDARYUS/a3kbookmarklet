@@ -115,12 +115,7 @@
             Object.keys(props).forEach((k) => {
                 if (k === 'style') el.style.cssText = props.style;
                 else if (k === 'dataset') Object.assign(el.dataset, props.dataset);
-                else if (k === 'children') props.children.forEach((c) => {
-                    if (typeof c === 'string' || typeof c === 'number')
-                        el.appendChild(document.createTextNode(String(c)));
-                    else
-                        el.appendChild(c);
-                });
+                else if (k === 'children') props.children.forEach((c) => el.appendChild(c));
                 else if (k === 'text') el.textContent = props.text;
                 else if (k === 'innerHTML') el.innerHTML = props.innerHTML;
                 else el[k] = props[k];
