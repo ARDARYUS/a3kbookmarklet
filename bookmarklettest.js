@@ -387,59 +387,121 @@
             }
         }
 
-        async fetchAnswer(queryContent, retryCount = 0) {
-            const MAX_RETRIES = 3, RETRY_DELAY_MS = 1000;
-            try {
-                if (this.currentAbortController) {
-                    try { this.currentAbortController.abort(); } catch (e) {}
-                }
-                this.currentAbortController = new AbortController();
-                const signal = this.currentAbortController.signal;
-
-                // --------- START REPLACE (lines 399-419) ----------
-                const useDirectApi = (localStorage.getItem(this.settingsKeys.ai_use_api) === 'true');
-                let response;
-
-                if (useDirectApi) {
-                    const groqUrl = localStorage.getItem(this.settingsKeys.ai_groq_url) || 'https://api.groq.com/openai/v1/chat/completions';
-                    const groqKey = localStorage.getItem(this.settingsKeys.ai_groq_key) || '';
-                    const groqModel = localStorage.getItem(this.settingsKeys.ai_groq_model) || 'llama-3.1-8b-instant';
-
-                    const chatPayload = {
-                        model: groqModel,
-                        messages: [
-                            { role: 'user', content: (queryContent || '') + (this.cachedArticle ? `\n\nArticle:\n${this.cachedArticle}` : '') }
-                        ],
-                        max_tokens: 1024
-                    };
-
-                    response = await fetch(groqUrl, {
-                        method: 'POST',
-                        headers: {
-                            'Accept': 'application/json',
-                            'Content-Type': 'application/json',
-                            ...(groqKey ? { 'Authorization': 'Bearer ' + groqKey } : {})
-                        },
-                        body: JSON.stringify(chatPayload),
-                        signal
-                    });
-                } else {
-                    // original proxy flow
-                    response = await fetch(this.askEndpoint, {
-                        method: 'POST',
-                        cache: 'no-cache',
-                        headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ q: queryContent, article: this.cachedArticle || null }),
-                        signal
-                    });
-                }
-                // --------- END REPLACE ----------
-
-            } catch (err) {
-                if (err && err.name === 'AbortError') return '<<ABORTED>>';
-                return `Error: ${err && err.message ? err.message : String(err)}`;
-            }
+        
+async fetchAnswer(queryContent, retryCount = 0) {
+    const MAX_RETRIES = 3, RETRY_DELAY_MS = 1000;
+    try {
+        // abort any pending request
+        if (this.currentAbortController) {
+            try { this.currentAbortController.abort(); } catch (e) {}
         }
+        this.currentAbortController = new AbortController();
+        const signal = this.currentAbortController.signal;
+
+        // Determine whether to use direct provider API (from settings or legacy localStorage keys)
+        let useDirectApi = false;
+        try {
+            useDirectApi = (this.settingsKeys && localStorage.getItem(this.settingsKeys.ai_use_api) === 'true')
+                || localStorage.getItem('ah_ai_use_api') === 'true';
+        } catch (e) {
+            useDirectApi = false;
+        }
+
+        let response;
+
+        if (useDirectApi) {
+            // read groq/openai settings (try both settingsKeys and legacy keys)
+            const groqUrl = (this.settingsKeys && localStorage.getItem(this.settingsKeys.ai_groq_url))
+                || localStorage.getItem('ah_ai_groq_url')
+                || 'https://api.groq.com/openai/v1/chat/completions';
+
+            const groqKey = (this.settingsKeys && localStorage.getItem(this.settingsKeys.ai_groq_key))
+                || localStorage.getItem('ah_ai_groq_key') || '';
+
+            const groqModel = (this.settingsKeys && localStorage.getItem(this.settingsKeys.ai_groq_model))
+                || localStorage.getItem('ah_ai_groq_model')
+                || 'llama-3.1-8b-instant';
+
+            // Build OpenAI-style chat payload
+            const chatPayload = {
+                model: groqModel,
+                messages: [
+                    { role: 'user', content: (queryContent || '') + (this.cachedArticle ? `\n\nArticle:\n${this.cachedArticle}` : '') }
+                ],
+                max_tokens: 1024
+            };
+
+            response = await fetch(groqUrl, {
+                method: 'POST',
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json',
+                    ...(groqKey ? { 'Authorization': 'Bearer ' + groqKey } : {})
+                },
+                body: JSON.stringify(chatPayload),
+                signal
+            });
+        } else {
+            // original proxy flow (Cloudflare endpoint)
+            response = await fetch(this.askEndpoint, {
+                method: 'POST',
+                cache: 'no-cache',
+                headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+                body: JSON.stringify({ q: queryContent, article: this.cachedArticle || null }),
+                signal
+            });
+        }
+
+        // clear current abort controller reference
+        this.currentAbortController = null;
+
+        // handle non-OK responses with retry logic for transient/server errors or quota responses
+        if (!response.ok) {
+            const text = await response.text().catch(() => '');
+            const status = response.status;
+            const isQuotaOrRate = /quota|exceeded|rate limit|429/i.test(text) || status === 429 || status === 500;
+            if (isQuotaOrRate && retryCount < MAX_RETRIES) {
+                await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
+                return this.fetchAnswer(queryContent, retryCount + 1);
+            }
+            throw new Error(`API error ${status}: ${text}`);
+        }
+
+        // parse response JSON (robust across proxy-style and OpenAI/Groq-style responses)
+        const data = await response.json().catch(() => null);
+
+        if (data) {
+            // OpenAI/Groq chat-completions style: { choices: [ { message: { content: "..." } } ] }
+            if (Array.isArray(data.choices) && data.choices.length) {
+                const c = data.choices[0];
+                if (c.message && (c.message.content || c.message.role)) {
+                    return String(c.message.content || c.text || '').trim();
+                }
+                if (c.text) return String(c.text).trim();
+                if (c.delta && c.delta.content) return String(c.delta.content).trim();
+            }
+
+            // Some providers return 'output' or 'result' arrays/strings
+            if (data.output) {
+                if (typeof data.output === 'string') return data.output.trim();
+                if (Array.isArray(data.output) && data.output.length) return String(data.output[0]).trim();
+            }
+
+            // Proxy-style fallback fields
+            if (data.response || data.answer) return String(data.response || data.answer).trim();
+            if (data.result) return String(data.result).trim();
+
+            // finally, if the entire body is a string-ish, return it
+            if (typeof data === 'string') return data.trim();
+        }
+
+        return 'No answer available';
+    } catch (err) {
+        if (err && err.name === 'AbortError') return '<<ABORTED>>';
+        return `Error: ${err && err.message ? err.message : String(err)}`;
+    }
+}
+
 
         // -------- Eye helpers --------
         setEyeToSleep() {
