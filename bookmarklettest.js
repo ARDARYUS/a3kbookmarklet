@@ -30,7 +30,7 @@
             this.draggabillyScriptUrl = 'https://unpkg.com/draggabilly@3/dist/draggabilly.pkgd.min.js';
 
             this.askEndpoint = 'https://f-ghost-insights-pressed.trycloudflare.com/ask';
-            this.assetBase = 'https://raw.githubusercontent.com/ARDARYUS/a3kbookmarklet/main/icons2/';
+            this.assetBase = 'https://raw.githubusercontent.com/ARDARYUS/a3kbookmarklet/main/icons/';
 
             // Settings keys & defaults
             this.settingsKeys = {
@@ -74,6 +74,14 @@
         // -------- utility: settings storage --------
         saveSetting(key, value) {
             try { localStorage.setItem(key, String(value)); } catch (e) {}
+            try {
+                // if AI-related settings changed, re-apply endpoint settings immediately
+                if (key === this.settingsKeys.ai_use_api || key === this.settingsKeys.ai_groq_url || key === this.settingsKeys.ai_groq_key || key === this.settingsKeys.ai_groq_model) {
+                    if (typeof this._applyAiSettings === 'function') {
+                        try { this._applyAiSettings(); } catch (e) {}
+                    }
+                }
+            } catch (e) {}
         }
         loadSetting(key, fallback) {
             try {
@@ -103,11 +111,44 @@
             this.saveSetting(this.settingsKeys.w_mood, '');
         }
 
+
+        // -------- AI settings helpers (applied to switch endpoints) --------
+        getAIUseApi() { return localStorage.getItem(this.settingsKeys.ai_use_api) === 'true'; }
+        getAIGroqUrl() { return localStorage.getItem(this.settingsKeys.ai_groq_url) || ''; }
+        getAIGroqKey() { return localStorage.getItem(this.settingsKeys.ai_groq_key) || ''; }
+        getAIGroqModel() { return localStorage.getItem(this.settingsKeys.ai_groq_model) || ''; }
+
+        _applyAiSettings() {
+            try {
+                if (this.getAIUseApi()) {
+                    const url = (this.getAIGroqUrl() || '').trim();
+                    if (url) {
+                        this.askEndpoint = url;
+                        this._useDirectApi = true;
+                        this._directApiKey = (this.getAIGroqKey() || '').trim() || null;
+                        this._directApiModel = (this.getAIGroqModel() || '').trim() || null;
+                        console.log('[AssessmentHelper] AI: using direct API ->', this.askEndpoint);
+                        return;
+                    }
+                }
+                // fallback to cloudflare helper
+                this.askEndpoint = 'https://f-ghost-insights-pressed.trycloudflare.com/ask';
+                this._useDirectApi = false;
+                this._directApiKey = null;
+                this._directApiModel = null;
+                console.log('[AssessmentHelper] AI: using cloudflare helper ->', this.askEndpoint);
+            } catch (e) {
+                console.warn('[AssessmentHelper] _applyAiSettings error', e);
+            }
+        }
+
+
+
         // -------- resources & element helpers --------
         getUrl(path) {
             if (!path) return '';
             if (/^https?:\/\//i.test(path)) return path;
-            if (path.indexOf('icons2/') === 0) return this.assetBase + path.substring('icons2/'.length);
+            if (path.indexOf('icons/') === 0) return this.assetBase + path.substring('icons/'.length);
             return this.assetBase + path;
         }
 
@@ -151,6 +192,9 @@
                 await Promise.resolve(this.loadScript(this.animeScriptUrl)).catch(() => {});
                 await Promise.resolve(this.loadScript(this.draggabillyScriptUrl)).catch(() => {});
 
+                // apply AI endpoint settings (cloudflare vs direct API)
+                try { if (typeof this._applyAiSettings === 'function') this._applyAiSettings(); } catch(e){}
+
                 this.itemMetadata = {
                     UI: this.createUI(),
                     answerUI: this.createAnswerUI()
@@ -185,13 +229,13 @@
             const eyeWrapper = this.createEl('div', {
                 id: 'helperEye',
                 style:
-                    'width:200px;height:200px;margin-top:0px;border-radius:25%;display:flex;align-items:center;justify-content:center;overflow:hidden;transform-style:preserve-3d;transition:all 0.12s linear;will-change:transform,top,right,width,height;transform-origin:50% 40%;pointer-events:none;'
+                    'width:90px;height:90px;margin-top:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;overflow:hidden;transform-style:preserve-3d;transition:all 0.12s linear;will-change:transform,top,right,width,height;transform-origin:50% 40%;pointer-events:none;'
             });
 
             const uiImg = this.createEl('img', {
                 id: 'helperEyeImg',
-                src: this.getUrl('icons2/sleep.gif'),
-                dataset: { idle: this.getUrl('icons2/idle.gif'), tilt: this.getUrl('icons2/full.gif') },
+                src: this.getUrl('icons/sleep.gif'),
+                dataset: { idle: this.getUrl('icons/idle.gif'), tilt: this.getUrl('icons/full.gif') },
                 style: 'width:100%;height:100%;object-fit:cover;display:block;pointer-events:none;'
             });
 
@@ -312,7 +356,7 @@
                 this.showUI();
                 return;
             }
-            const imageUrl = this.getUrl('icons2/eyebackground.gif');
+            const imageUrl = this.getUrl('icons/eyebackground.gif');
             const introImgElement = this.createEl('img', {
                 src: imageUrl,
                 id: 'introLoaderImage',
@@ -325,10 +369,10 @@
                 duration: 800,
                 complete: () => { try { introImgElement.remove(); } catch (e) {} this.showUI(); }
             })
-                .add({ targets: introImgElement, opacity: [0, 1], scale: [0.5, 1], rotate: '1turn', duration: 1000, easing: 'easeOutExpo' })
-                .add({ targets: introImgElement, translateY: '-=20', duration: 500, easing: 'easeInOutSine' })
-                .add({ targets: introImgElement, translateY: '+=20', duration: 500, easing: 'easeInOutSine' })
-                .add({ targets: introImgElement, opacity: 0, duration: 500, easing: 'linear' }, '+=500');
+            .add({ targets: introImgElement, opacity: [0, 1], scale: [0.5, 1], rotate: '1turn', duration: 1000, easing: 'easeOutExpo' })
+            .add({ targets: introImgElement, translateY: '-=20', duration: 500, easing: 'easeInOutSine' })
+            .add({ targets: introImgElement, translateY: '+=20', duration: 500, easing: 'easeInOutSine' })
+            .add({ targets: introImgElement, opacity: 0, duration: 500, easing: 'linear' }, '+=500');
         }
 
         showUI(skipAnimation = false) {
@@ -346,34 +390,88 @@
             }
         }
 
-        showAlert(message, type = 'info') {
-            const alertContainer = this.createEl('div', {
-                style: `position:fixed;top:20px;left:50%;transform:translateX(-50%);background-color:${type === 'error' ? '#dc3545' : '#007bff'};color:white;padding:15px 25px;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.2);z-index:100000;opacity:0;transition:opacity 0.5s ease-in-out;font-family:'Nunito',sans-serif;font-size:16px;max-width:80%;text-align:center;`
-            });
-            alertContainer.textContent = message;
-            document.body.appendChild(alertContainer);
-            setTimeout(() => (alertContainer.style.opacity = 1), 10);
-            setTimeout(() => { alertContainer.style.opacity = 0; alertContainer.addEventListener('transitionend', () => alertContainer.remove()); }, 5000);
-        }
-
-        // -------- fetch article / answer --------
-        async fetchArticleContent() {
+        showAlert(message, typ
+        async fetchAnswer(queryContent, retryCount = 0) {
+            const MAX_RETRIES = 3, RETRY_DELAY_MS = 1000;
             try {
-                const articleContainer = document.querySelector('#start-reading');
-                let articleContent = '';
-                if (articleContainer) {
-                    const paragraphs = articleContainer.querySelectorAll('p');
-                    articleContent = Array.from(paragraphs).map((p) => p.textContent.trim()).join(' ');
+                if (this.currentAbortController) {
+                    try { this.currentAbortController.abort(); } catch (e) {}
+                }
+                this.currentAbortController = new AbortController();
+                const signal = this.currentAbortController.signal;
+
+                // Build headers/body depending on whether direct API is enabled
+                const headers = { 'Accept': 'application/json', 'Content-Type': 'application/json' };
+                let body = null;
+                const endpoint = this.askEndpoint || 'https://f-ghost-insights-pressed.trycloudflare.com/ask';
+
+                if (this._useDirectApi) {
+                    if (this._directApiKey) headers['Authorization'] = 'Bearer ' + this._directApiKey;
+                    // Heuristic: if endpoint looks like OpenAI/Groq chat endpoint, send chat-completion shape
+                    const isChatLike = /openai|chat|completions|groq|api\\.groq/i.test(endpoint);
+                    if (isChatLike) {
+                        body = JSON.stringify({
+                            model: this._directApiModel || 'gpt-4o-mini',
+                            messages: [{ role: 'user', content: queryContent }],
+                            max_tokens: 1024,
+                            temperature: 0.0
+                        });
+                    } else {
+                        // fallback to original simple contract to preserve behavior for non-chat endpoints
+                        body = JSON.stringify({ q: queryContent, article: this.cachedArticle || null, model: this._directApiModel || undefined });
+                    }
+                } else {
+                    // cloudflare helper expects { q, article }
+                    body = JSON.stringify({ q: queryContent, article: this.cachedArticle || null });
                 }
 
-                const questionContainer = document.querySelector('#activity-component-react') || document.querySelector('#question-text');
-                let questionContent = '';
-                if (questionContainer) questionContent = questionContainer.textContent.trim();
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    cache: 'no-cache',
+                    headers,
+                    body,
+                    signal
+                });
 
-                let writingQuestion = '';
-                try {
-                    const xpath = '//*[@id="before-reading-thought"]/div[1]/p/div';
-                    const result = document.evaluate(xpath, document, null, XPathResult.STRING_TYPE, null);
+                this.currentAbortController = null;
+
+                if (!response.ok) {
+                    const text = await response.text().catch(() => '');
+                    if ((response.status === 500 || response.status === 429) && text && text.toLowerCase().includes('quota') && retryCount < MAX_RETRIES) {
+                        await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
+                        return this.fetchAnswer(queryContent, retryCount + 1);
+                    }
+                    throw new Error(`API error ${response.status}: ${text}`);
+                }
+
+                const data = await response.json().catch(() => null);
+                if (!data) return 'No answer available';
+
+                // compatibility: cloudflare helper returns { response | answer }
+                if (data.response || data.answer) return String(data.response || data.answer).trim();
+
+                // OpenAI / Groq style: try choices[0].message.content, choices[0].text, or output[0]
+                if (Array.isArray(data.choices) && data.choices.length) {
+                    const choice = data.choices[0];
+                    if (choice.message && (choice.message.content || choice.message.content === '')) return String(choice.message.content || '').trim();
+                    if (choice.text) return String(choice.text).trim();
+                    if (choice.delta && choice.delta.content) return String(choice.delta.content).trim();
+                }
+                if (data.output && Array.isArray(data.output) && data.output.length) {
+                    const o = data.output[0];
+                    if (typeof o === 'string') return o.trim();
+                    if (o.content) return String(o.content || o.text || '').trim();
+                }
+
+                // last resorts
+                if (typeof data === 'string') return data.trim();
+                try { return JSON.stringify(data).slice(0, 200); } catch (e) { return 'No answer available'; }
+            } catch (err) {
+                if (err && err.name === 'AbortError') return '<<ABORTED>>';
+                return `Error: ${err && err.message ? err.message : String(err)}`;
+            }
+        }
+;
                     writingQuestion = (result && result.stringValue) ? result.stringValue.trim() : '';
                 } catch (e) {
                     writingQuestion = '';
@@ -433,7 +531,7 @@
                 if (!img || !video) return;
                 video.style.display = 'none';
                 img.style.display = 'block';
-                img.src = this.getUrl('icons2/sleep.gif');
+                img.src = this.getUrl('icons/sleep.gif');
                 this.eyeState = 'sleep';
                 img.style.opacity = '1';
             } catch (err) {}
@@ -448,21 +546,21 @@
                 if (!img || !video) return;
                 video.style.display = 'none';
                 img.style.display = 'block';
-                img.src = this.getUrl('icons2/full.gif') + '?r=' + Date.now();
+                img.src = this.getUrl('icons/full.gif') + '?r=' + Date.now();
             } catch (err) {}
         }
 
         async handleHoverEnter() {
             if (this.eyeState === 'full') return;
             try {
-                await this.playVideoOnce(this.getUrl('icons2/wakeup.webm'));
+                await this.playVideoOnce(this.getUrl('icons/wakeup.webm'));
                 if (this.eyeState === 'full') return;
                 const img = document.getElementById('helperEyeImg');
                 const video = document.getElementById('helperEyeVideo');
                 if (!img || !video) return;
                 video.style.display = 'none';
                 img.style.display = 'block';
-                img.src = this.getUrl('icons2/idle.gif') + '?r=' + Date.now();
+                img.src = this.getUrl('icons/idle.gif') + '?r=' + Date.now();
                 this.eyeState = 'idle';
             } catch (err) {}
         }
@@ -470,7 +568,7 @@
         async handleHoverLeave() {
             if (this.eyeState === 'full') return;
             try {
-                await this.playVideoOnce(this.getUrl('icons2/gotosleep.webm'));
+                await this.playVideoOnce(this.getUrl('icons/gotosleep.webm'));
                 if (this.eyeState === 'full') return;
                 this.setEyeToSleep();
             } catch (err) {}
@@ -553,7 +651,7 @@
             if (label) label.textContent = 'work smArt-er';
             try { console.log('[AssessmentHelper] stopped'); } catch (e) {}
 
-            try { await this.playVideoOnce(this.getUrl('icons2/gotosleep.webm')); } catch (e) {}
+            try { await this.playVideoOnce(this.getUrl('icons/gotosleep.webm')); } catch (e) {}
             this.setEyeToSleep();
         }
 
@@ -967,10 +1065,10 @@
                                 try { window.__AssessmentHelperInstance.stopProcessImmediate(); } catch (e) {}
                             }
                         } catch (e) {}
-
+                
                         // fade out
                         launcher.style.opacity = 0;
-
+                
                         // remove DOM nodes after fade completes, and clear global reference
                         launcher.addEventListener('transitionend', function handler() {
                             try {
@@ -1576,7 +1674,7 @@
                     this.isRunning = false;
                     const spinnerEl = document.getElementById('ah-spinner');
                     if (spinnerEl) spinnerEl.style.display = 'none';
-                    try { await this.playVideoOnce(this.getUrl('icons2/gotosleep.webm')); } catch (e) {}
+                    try { await this.playVideoOnce(this.getUrl('icons/gotosleep.webm')); } catch (e) {}
                     this.setEyeToSleep();
                     try { console.log('[AssessmentHelper] stopped'); } catch (e) {}
                     const label = document.getElementById('getAnswerButtonText');
