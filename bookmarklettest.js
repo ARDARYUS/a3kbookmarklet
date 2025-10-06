@@ -400,7 +400,8 @@
             setTimeout(() => { alertContainer.style.opacity = 0; alertContainer.addEventListener('transitionend', () => alertContainer.remove()); }, 5000);
         }
 
-        async fetchAnswer(queryContent, retryCount = 0) {
+        
+async fetchAnswer(queryContent, retryCount = 0) {
             const MAX_RETRIES = 3, RETRY_DELAY_MS = 1000;
             try {
                 if (this.currentAbortController) {
@@ -446,7 +447,10 @@
 
                 if (!response.ok) {
                     const text = await response.text().catch(() => '');
-                    if ((response.status === 500 || response.status === 429) && text && text.toLowerCase().includes('quota') && retryCount < MAX_RETRIES) {
+                    // Retry on server errors or rate/quota related messages
+                    const statusRetry = (response.status === 500 || response.status === 429);
+                    const quotaMessage = text && String(text).toLowerCase().includes('quota');
+                    if (statusRetry && quotaMessage && retryCount < MAX_RETRIES) {
                         await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
                         return this.fetchAnswer(queryContent, retryCount + 1);
                     }
@@ -474,16 +478,13 @@
 
                 // last resorts
                 if (typeof data === 'string') return data.trim();
-    && text.includes("429 You exceeded your current quota") && retryCount < MAX_RETRIES) {
-                        await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
-                        return this.fetchAnswer(queryContent, retryCount + 1);
-                    }
-                    throw new Error(`API error ${response.status}: ${text}`);
-                }
-                const data = await response.json().catch(() => null);
-                if (data && (data.response || data.answer)) return String(data.response || data.answer).trim();
-                return 'No answer available';
+                try { return JSON.stringify(data).slice(0, 200); } catch (e) { return 'No answer available'; }
             } catch (err) {
+                if (err && err.name === 'AbortError') return '<<ABORTED>>';
+                return `Error: ${err && err.message ? err.message : String(err)}`;
+            }
+        }
+ catch (err) {
                 if (err && err.name === 'AbortError') return '<<ABORTED>>';
                 return `Error: ${err && err.message ? err.message : String(err)}`;
             }
