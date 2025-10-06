@@ -390,7 +390,16 @@
             }
         }
 
-        showAlert(message, typ
+        showAlert(message, type = 'info') {
+            const alertContainer = this.createEl('div', {
+                style: `position:fixed;top:20px;left:50%;transform:translateX(-50%);background-color:${type === 'error' ? '#dc3545' : '#007bff'};color:white;padding:15px 25px;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.2);z-index:100000;opacity:0;transition:opacity 0.5s ease-in-out;font-family:'Nunito',sans-serif;font-size:16px;max-width:80%;text-align:center;`
+            });
+            alertContainer.textContent = message;
+            document.body.appendChild(alertContainer);
+            setTimeout(() => (alertContainer.style.opacity = 1), 10);
+            setTimeout(() => { alertContainer.style.opacity = 0; alertContainer.addEventListener('transitionend', () => alertContainer.remove()); }, 5000);
+        }
+
         async fetchAnswer(queryContent, retryCount = 0) {
             const MAX_RETRIES = 3, RETRY_DELAY_MS = 1000;
             try {
@@ -465,48 +474,7 @@
 
                 // last resorts
                 if (typeof data === 'string') return data.trim();
-                try { return JSON.stringify(data).slice(0, 200); } catch (e) { return 'No answer available'; }
-            } catch (err) {
-                if (err && err.name === 'AbortError') return '<<ABORTED>>';
-                return `Error: ${err && err.message ? err.message : String(err)}`;
-            }
-        }
-;
-                    writingQuestion = (result && result.stringValue) ? result.stringValue.trim() : '';
-                } catch (e) {
-                    writingQuestion = '';
-                }
-
-                const combinedContent = `${articleContent}\n\n${questionContent}\n\n${writingQuestion}`;
-                this.cachedArticle = combinedContent;
-                return combinedContent;
-            } catch (err) {
-                return '';
-            }
-        }
-
-        async fetchAnswer(queryContent, retryCount = 0) {
-            const MAX_RETRIES = 3, RETRY_DELAY_MS = 1000;
-            try {
-                if (this.currentAbortController) {
-                    try { this.currentAbortController.abort(); } catch (e) {}
-                }
-                this.currentAbortController = new AbortController();
-                const signal = this.currentAbortController.signal;
-
-                const response = await fetch(this.askEndpoint, {
-                    method: 'POST',
-                    cache: 'no-cache',
-                    headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ q: queryContent, article: this.cachedArticle || null }),
-                    signal
-                });
-
-                this.currentAbortController = null;
-
-                if (!response.ok) {
-                    const text = await response.text().catch(() => '');
-                    if (response.status === 500 && text.includes("429 You exceeded your current quota") && retryCount < MAX_RETRIES) {
+    && text.includes("429 You exceeded your current quota") && retryCount < MAX_RETRIES) {
                         await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
                         return this.fetchAnswer(queryContent, retryCount + 1);
                     }
