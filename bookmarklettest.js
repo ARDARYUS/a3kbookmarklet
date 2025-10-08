@@ -45,7 +45,8 @@
                 ai_use_api: 'ah_ai_use_api',
                 ai_groq_url: 'ah_ai_groq_url',
                 ai_groq_key: 'ah_ai_groq_key',
-                ai_groq_model: 'ah_ai_groq_model'
+                ai_groq_model: 'ah_ai_groq_model',
+                ai_cf_url: 'ah_ai_cf_url'
             };
             this.defaults = {
                 mc_wait: 300,
@@ -325,10 +326,10 @@
                 duration: 800,
                 complete: () => { try { introImgElement.remove(); } catch (e) {} this.showUI(); }
             })
-            .add({ targets: introImgElement, opacity: [0, 1], scale: [0.5, 1], rotate: '1turn', duration: 1000, easing: 'easeOutExpo' })
-            .add({ targets: introImgElement, translateY: '-=20', duration: 500, easing: 'easeInOutSine' })
-            .add({ targets: introImgElement, translateY: '+=20', duration: 500, easing: 'easeInOutSine' })
-            .add({ targets: introImgElement, opacity: 0, duration: 500, easing: 'linear' }, '+=500');
+                .add({ targets: introImgElement, opacity: [0, 1], scale: [0.5, 1], rotate: '1turn', duration: 1000, easing: 'easeOutExpo' })
+                .add({ targets: introImgElement, translateY: '-=20', duration: 500, easing: 'easeInOutSine' })
+                .add({ targets: introImgElement, translateY: '+=20', duration: 500, easing: 'easeInOutSine' })
+                .add({ targets: introImgElement, opacity: 0, duration: 500, easing: 'linear' }, '+=500');
         }
 
         showUI(skipAnimation = false) {
@@ -387,41 +388,126 @@
             }
         }
 
-        async fetchAnswer(queryContent, retryCount = 0) {
-            const MAX_RETRIES = 3, RETRY_DELAY_MS = 1000;
-            try {
-                if (this.currentAbortController) {
-                    try { this.currentAbortController.abort(); } catch (e) {}
-                }
-                this.currentAbortController = new AbortController();
-                const signal = this.currentAbortController.signal;
+        
+async fetchAnswer(queryContent, retryCount = 0) {
+    const MAX_RETRIES = 3, RETRY_DELAY_MS = 1000;
+    try {
+        // abort any pending request
+        if (this.currentAbortController) {
+            try { this.currentAbortController.abort(); } catch (e) {}
+        }
+        this.currentAbortController = new AbortController();
+        const signal = this.currentAbortController.signal;
 
-                const response = await fetch(this.askEndpoint, {
-                    method: 'POST',
-                    cache: 'no-cache',
-                    headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ q: queryContent, article: this.cachedArticle || null }),
-                    signal
+        // Determine whether to use direct provider API (from settings or legacy localStorage keys)
+        let useDirectApi = false;
+        try {
+            useDirectApi = (this.settingsKeys && localStorage.getItem(this.settingsKeys.ai_use_api) === 'true')
+                || localStorage.getItem('ah_ai_use_api') === 'true';
+        } catch (e) {
+            useDirectApi = false;
+        }
+
+        let response;
+
+        if (useDirectApi) {
+            // read groq/openai settings (try both settingsKeys and legacy keys)
+            const groqUrl = (this.settingsKeys && localStorage.getItem(this.settingsKeys.ai_groq_url))
+                || localStorage.getItem('ah_ai_groq_url')
+                || 'https://api.groq.com/openai/v1/chat/completions';
+
+            const groqKey = (this.settingsKeys && localStorage.getItem(this.settingsKeys.ai_groq_key))
+                || localStorage.getItem('ah_ai_groq_key') || '';
+
+            const groqModel = (this.settingsKeys && localStorage.getItem(this.settingsKeys.ai_groq_model))
+                || localStorage.getItem('ah_ai_groq_model')
+                || 'llama-3.1-8b-instant';
+
+            // Build OpenAI-style chat payload
+            const chatPayload = {
+                model: groqModel,
+                messages: [
+                    { role: 'user', content: (queryContent || '') + (this.cachedArticle ? `\n\nArticle:\n${this.cachedArticle}` : '') }
+                ],
+                max_tokens: 1024
+            };
+
+            response = await fetch(groqUrl, {
+                method: 'POST',
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json',
+                    ...(groqKey ? { 'Authorization': 'Bearer ' + groqKey } : {})
+                },
+                body: JSON.stringify(chatPayload),
+                signal
+            });
+        } else {
+            // original proxy flow (Cloudflare endpoint) — use configured setting if present
+            const cfUrl = (this.settingsKeys && localStorage.getItem(this.settingsKeys.ai_cf_url))
+                || localStorage.getItem('ah_ai_cf_url')
+                || this.askEndpoint;
+
+            response = await fetch(cfUrl, {
+                method: 'POST',
+                cache: 'no-cache',
+                headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+                body: JSON.stringify({ q: queryContent, article: this.cachedArticle || null }),
+                signal
                 });
 
-                this.currentAbortController = null;
-
-                if (!response.ok) {
-                    const text = await response.text().catch(() => '');
-                    if (response.status === 500 && text.includes("429 You exceeded your current quota") && retryCount < MAX_RETRIES) {
-                        await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
-                        return this.fetchAnswer(queryContent, retryCount + 1);
-                    }
-                    throw new Error(`API error ${response.status}: ${text}`);
-                }
-                const data = await response.json().catch(() => null);
-                if (data && (data.response || data.answer)) return String(data.response || data.answer).trim();
-                return 'No answer available';
-            } catch (err) {
-                if (err && err.name === 'AbortError') return '<<ABORTED>>';
-                return `Error: ${err && err.message ? err.message : String(err)}`;
-            }
         }
+
+        // clear current abort controller reference
+        this.currentAbortController = null;
+
+        // handle non-OK responses with retry logic for transient/server errors or quota responses
+        if (!response.ok) {
+            const text = await response.text().catch(() => '');
+            const status = response.status;
+            const isQuotaOrRate = /quota|exceeded|rate limit|429/i.test(text) || status === 429 || status === 500;
+            if (isQuotaOrRate && retryCount < MAX_RETRIES) {
+                await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
+                return this.fetchAnswer(queryContent, retryCount + 1);
+            }
+            throw new Error(`API error ${status}: ${text}`);
+        }
+
+        // parse response JSON (robust across proxy-style and OpenAI/Groq-style responses)
+        const data = await response.json().catch(() => null);
+
+        if (data) {
+            // OpenAI/Groq chat-completions style: { choices: [ { message: { content: "..." } } ] }
+            if (Array.isArray(data.choices) && data.choices.length) {
+                const c = data.choices[0];
+                if (c.message && (c.message.content || c.message.role)) {
+                    return String(c.message.content || c.text || '').trim();
+                }
+                if (c.text) return String(c.text).trim();
+                if (c.delta && c.delta.content) return String(c.delta.content).trim();
+            }
+
+            // Some providers return 'output' or 'result' arrays/strings
+            if (data.output) {
+                if (typeof data.output === 'string') return data.output.trim();
+                if (Array.isArray(data.output) && data.output.length) return String(data.output[0]).trim();
+            }
+
+            // Proxy-style fallback fields
+            if (data.response || data.answer) return String(data.response || data.answer).trim();
+            if (data.result) return String(data.result).trim();
+
+            // finally, if the entire body is a string-ish, return it
+            if (typeof data === 'string') return data.trim();
+        }
+
+        return 'No answer available';
+    } catch (err) {
+        if (err && err.name === 'AbortError') return '<<ABORTED>>';
+        return `Error: ${err && err.message ? err.message : String(err)}`;
+    }
+}
+
 
         // -------- Eye helpers --------
         setEyeToSleep() {
@@ -844,6 +930,27 @@
             urlRow.appendChild(urlLabel); urlRow.appendChild(urlInput); urlRow.appendChild(urlReset);
             panel.appendChild(urlRow);
 
+            // Add this after the Groq URL row (in the settings panel UI builder)
+            const cfRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;width:100%;' });
+            const cfLabel = this.createEl('label', { text: 'Cloudflare proxy URL:', style: 'min-width:160px;' });
+            const cfInput = this.createEl('input', {
+                type: 'text',
+                id: 'aiCfUrlInput',
+                value: localStorage.getItem(this.settingsKeys.ai_cf_url) || this.askEndpoint,
+                style: 'flex:1;',
+            });
+            const cfReset = this.createEl('span', { className: 'ah-reset', text: '↺', title: 'Reset to default' });
+            cfReset.addEventListener('click', () => {
+                cfInput.value = this.askEndpoint;
+                this.saveSetting(this.settingsKeys.ai_cf_url, cfInput.value);
+            });
+
+            cfRow.appendChild(cfLabel);
+            cfRow.appendChild(cfInput);
+            cfRow.appendChild(cfReset);
+            panel.appendChild(cfRow);
+
+
             const keyRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;width:100%;' });
             const keyLabel = this.createEl('label', { text: 'Groq API key:', style: 'min-width:160px;' });
             const keyInput = this.createEl('input', { type: 'text', id: 'aiGroqKeyInput', value: localStorage.getItem(this.settingsKeys.ai_groq_key) || '', placeholder: 'paste your key here', style: 'flex:1;' });
@@ -868,6 +975,9 @@
             this.saveSetting(this.settingsKeys.ai_groq_url, urlInput.value);
             this.saveSetting(this.settingsKeys.ai_groq_model, modelInput.value);
             if (keyInput.value) this.saveSetting(this.settingsKeys.ai_groq_key, keyInput.value);
+            // save Cloudflare URL
+            this.saveSetting(this.settingsKeys.ai_cf_url, cfInput.value || this.askEndpoint);
+
         }
 
         backFromSettings() {
@@ -967,10 +1077,10 @@
                                 try { window.__AssessmentHelperInstance.stopProcessImmediate(); } catch (e) {}
                             }
                         } catch (e) {}
-                
+
                         // fade out
                         launcher.style.opacity = 0;
-                
+
                         // remove DOM nodes after fade completes, and clear global reference
                         launcher.addEventListener('transitionend', function handler() {
                             try {
