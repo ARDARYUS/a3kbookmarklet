@@ -345,7 +345,6 @@
                 });
 
                 // Settings cog/back wiring
-                const settingsCog = document.getElementById('settingsCog');
                 const settingsBack = document.getElementById('settingsBack');
                 if (settingsCog) settingsCog.addEventListener('click', (e) => { e.preventDefault(); this.openSettingsMenu(); });
                 if (settingsBack) settingsBack.addEventListener('click', (e) => { e.preventDefault(); this.backFromSettings(); });
