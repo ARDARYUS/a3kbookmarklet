@@ -345,11 +345,8 @@
                 });
 
                 // Settings cog/back wiring
-                const settingsCogEl = document.getElementById('settingsCog');
-                const settingsBackEl = document.getElementById('settingsBack');
-                if (settingsCogEl) settingsCogEl.addEventListener('click', (e) => { e.preventDefault(); this.openSettingsMenu(); });
-                if (settingsBackEl) settingsBackEl.addEventListener('click', (e) => { e.preventDefault(); this.backFromSettings(); });
-
+                if (settingsCog) settingsCog.addEventListener('click', (e) => { e.preventDefault(); this.openSettingsMenu(); });
+                if (settingsBack) settingsBack.addEventListener('click', (e) => { e.preventDefault(); this.backFromSettings(); });
 
             } catch (e) {}
         }
@@ -566,13 +563,13 @@
                                     }
                                 }
                             }
-                        } try {} catch (e) {
+                        } catch (e) {
                             console.warn('[AssessmentHelper] Ready/Reflect handler error', e && e.message);
                         }
+
                     } // end Ready/Reflect handler
 
                     // Normal writing detection (non-ready/reflect)
-                    catch(e){}
                     if (tinyIframe || plainTextarea || contentEditable) {
                         let queryContentWriting = queryContent + "\n\nPlease provide a detailed written answer based on the above article and question.";
                         // append the user's writing settings
