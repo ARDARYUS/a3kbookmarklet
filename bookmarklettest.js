@@ -345,9 +345,11 @@
                 });
 
                 // Settings cog/back wiring
-                const settingsBack = document.getElementById('settingsBack');
-                if (settingsCog) settingsCog.addEventListener('click', (e) => { e.preventDefault(); this.openSettingsMenu(); });
-                if (settingsBack) settingsBack.addEventListener('click', (e) => { e.preventDefault(); this.backFromSettings(); });
+                const settingsCogEl = document.getElementById('settingsCog');
+                const settingsBackEl = document.getElementById('settingsBack');
+                if (settingsCogEl) settingsCogEl.addEventListener('click', (e) => { e.preventDefault(); this.openSettingsMenu(); });
+                if (settingsBackEl) settingsBackEl.addEventListener('click', (e) => { e.preventDefault(); this.backFromSettings(); });
+
 
             } catch (e) {}
         }
@@ -384,13 +386,13 @@
                                     const altXpath = '//*[@id="before-reading-poll"]/div[1]/p[2]/div';
                                     const node = document.evaluate(altXpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
                                     if (node) readyQuestion = (node.textContent || '').trim();
-                                } catch (e) {}
+                                } catch (e) { /* ignore */ }
                             }
                             if (!readyQuestion) {
                                 try {
                                     const fallbackNode = document.querySelector('#before-reading-poll p:nth-of-type(2) div') || document.querySelector('#before-reading-poll p div');
                                     if (fallbackNode) readyQuestion = (fallbackNode.textContent || '').trim();
-                                } catch (e) {}
+                                } catch (e) { /* ignore */ }
                             }
 
                             if (readyQuestion) {
@@ -398,7 +400,7 @@
                                     console.groupCollapsed('[AssessmentHelper] Ready/Reflect detected — question fetched');
                                     console.log(readyQuestion);
                                     console.groupEnd();
-                                } catch (e) {}
+                                } catch (e) { /* ignore */ }
 
                                 // Check for radio inputs specified by XPaths
                                 const agreeXpath = '//*[@id="before-reading-poll"]/div[1]/fieldset/div/label[1]/span[1]/input';
@@ -419,14 +421,18 @@
                                         console.log('q:', prompt);
                                         console.log('article:', this.cachedArticle || null);
                                         console.groupEnd();
-                                    } catch (e) {}
+                                    } catch (e) { /* ignore */ }
 
-                                    const classification = await this.fetchAnswer(prompt);
+                                    const classificationRaw = await this.fetchAnswer(prompt);
+                                    const classification = (typeof classificationRaw === 'string')
+                                        ? classificationRaw
+                                        : (classificationRaw && (classificationRaw.text || classificationRaw.choice || classificationRaw.response || classificationRaw.answer)) || '';
+
                                     try {
                                         console.groupCollapsed('[AssessmentHelper] Received (Ready/Reflect) classification');
                                         console.log(classification);
                                         console.groupEnd();
-                                    } catch (e) {}
+                                    } catch (e) { /* ignore */ }
 
                                     const normalized = (String(classification || '')).trim().toUpperCase();
                                     let pickAgree = false;
@@ -480,18 +486,23 @@
                                         console.groupCollapsed('[AssessmentHelper] Sent (Ready/Reflect justification) payload');
                                         console.log('q:', justificationPrompt);
                                         console.groupEnd();
-                                    } catch (e) {}
+                                    } catch (e) { /* ignore */ }
 
-                                    const justificationText = await this.fetchAnswer(justificationPrompt);
+                                    const justificationRaw = await this.fetchAnswer(justificationPrompt);
+                                    const justificationText = (typeof justificationRaw === 'string')
+                                        ? justificationRaw
+                                        : (justificationRaw && (justificationRaw.text || justificationRaw.answer || justificationRaw.response)) || '';
 
                                     // post-process — apply blacklist / lowercase
                                     let processed = String(justificationText || '');
                                     try {
                                         const blacklist = this.getWBlacklist() || '';
                                         if (blacklist && blacklist.length > 0) {
-                                            const escaped = blacklist.split('').map(ch => ch.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')).join('|');
-                                            if (escaped) {
-                                                const re = new RegExp(escaped, 'g');
+                                            // build safe char class by escaping each char
+                                            const escapedChars = blacklist.split('').map(ch => ch.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')).join('');
+                                            if (escapedChars) {
+                                                // create a global char-class removing any blacklisted chars
+                                                const re = new RegExp('[' + escapedChars + ']', 'g');
                                                 processed = processed.replace(re, '');
                                             }
                                         }
@@ -502,7 +513,7 @@
                                                 const ch = blacklist[i];
                                                 processed = processed.split(ch).join('');
                                             }
-                                        } catch (e2) {}
+                                        } catch (e2) { /* ignore */ }
                                     }
 
                                     if (this.getWLowercase()) processed = processed.toLowerCase();
@@ -514,7 +525,7 @@
                                         const contentEditableLocal = document.querySelector('[contenteditable="true"]');
 
                                         if (tinyIframeLocal) {
-                                            const iframeDoc = tinyIframeLocal.contentDocument || tinyIframeLocal.contentWindow.document;
+                                            const iframeDoc = tinyIframeLocal.contentDocument || (tinyIframeLocal.contentWindow && tinyIframeLocal.contentWindow.document);
                                             if (iframeDoc) {
                                                 iframeDoc.body.innerHTML = processed;
                                                 setTimeout(() => {
@@ -541,7 +552,7 @@
                                         // stop after insertion
                                         this._stoppedByWrite = true;
                                         this.isRunning = false;
-                                        try { await this.stopProcessUI(); } catch (e) {}
+                                        try { await this.stopProcessUI(); } catch (e) { /* ignore */ }
                                         return false;
                                     } catch (e) {
                                         const answerContainerEl = document.getElementById('answerContainer');
@@ -550,244 +561,227 @@
                                         if (answerContainerEl) { answerContainerEl.style.display = 'flex'; answerContainerEl.style.visibility = 'visible'; answerContainerEl.classList.add('show'); }
                                         this._stoppedByWrite = true;
                                         this.isRunning = false;
-                                        try { await this.stopProcessUI(); } catch (e2) {}
+                                        try { await this.stopProcessUI(); } catch (e2) { /* ignore */ }
                                         return false;
                                     }
                                 }
-                            } catch (e) {
-                                console.warn('[AssessmentHelper] Ready/Reflect handler error', e && e.message);
                             }
+                        } try {} catch (e) {
+                            console.warn('[AssessmentHelper] Ready/Reflect handler error', e && e.message);
+                        }
+                    } // end Ready/Reflect handler
 
-                            // Normal writing detection (non-ready/reflect)
-                            if (tinyIframe || plainTextarea || contentEditable) {
-                                let queryContentWriting = queryContent + "\n\nPlease provide a detailed written answer based on the above article and question.";
-                                // append the user's writing settings
-                                const level = this.getWLevel();
-                                const minWords = this.getWMin();
-                                const maxWords = this.getWMax();
-                                const mood = this.getWMood();
-                                if (level) queryContentWriting += ` Use English level ${level}.`;
-                                if (minWords && maxWords) queryContentWriting += ` Use minimum ${minWords} words and maximum ${maxWords} words.`;
-                                else if (minWords) queryContentWriting += ` Use minimum ${minWords} words.`;
-                                else if (maxWords) queryContentWriting += ` Use maximum ${maxWords} words.`;
-                                if (mood) queryContentWriting += ` ${mood}`;
+                    // Normal writing detection (non-ready/reflect)
+                    catch(e){}
+                    if (tinyIframe || plainTextarea || contentEditable) {
+                        let queryContentWriting = queryContent + "\n\nPlease provide a detailed written answer based on the above article and question.";
+                        // append the user's writing settings
+                        const level = this.getWLevel();
+                        const minWords = this.getWMin();
+                        const maxWords = this.getWMax();
+                        const mood = this.getWMood();
+                        if (level) queryContentWriting += ` Use English level ${level}.`;
+                        if (minWords && maxWords) queryContentWriting += ` Use minimum ${minWords} words and maximum ${maxWords} words.`;
+                        else if (minWords) queryContentWriting += ` Use minimum ${minWords} words.`;
+                        else if (maxWords) queryContentWriting += ` Use maximum ${maxWords} words.`;
+                        if (mood) queryContentWriting += ` ${mood}`;
 
-                                try {
-                                    console.groupCollapsed('[AssessmentHelper] Sent (writing) payload');
-                                    console.log('q:', queryContentWriting);
-                                    console.log('article:', this.cachedArticle || null);
-                                    console.groupEnd();
-                                } catch (e) {}
+                        try {
+                            console.groupCollapsed('[AssessmentHelper] Sent (writing) payload');
+                            console.log('q:', queryContentWriting);
+                            console.log('article:', this.cachedArticle || null);
+                            console.groupEnd();
+                        } catch (e) { /* ignore */ }
 
-                                const answerText = await this.fetchAnswer(queryContentWriting);
+                        const answerRaw = await this.fetchAnswer(queryContentWriting);
+                        const answerText = (typeof answerRaw === 'string')
+                            ? answerRaw
+                            : (answerRaw && (answerRaw.text || answerRaw.answer || answerRaw.response || answerRaw.result)) || '';
 
-                                try {
-                                    console.groupCollapsed('[AssessmentHelper] Received (writing) answer');
-                                    console.log(answerText);
-                                    console.groupEnd();
-                                } catch (e) {}
+                        try {
+                            console.groupCollapsed('[AssessmentHelper] Received (writing) answer');
+                            console.log(answerText);
+                            console.groupEnd();
+                        } catch (e) { /* ignore */ }
 
-                                if (!this.isRunning) return false;
+                        if (!this.isRunning) return false;
 
-                                // post-process client-side blacklist / lowercase
-                                let processed = String(answerText || '');
-                                try {
-                                    const blacklist = this.getWBlacklist() || '';
-                                    if (blacklist && blacklist.length > 0) {
-                                        const escaped = blacklist.split('').map(ch => ch.replace(/[-\/\\^$*+?.()|[\\]{}]/g, '\\$&')).join('|');
-                                        if (escaped) {
-                                            const re = new RegExp(escaped, 'g');
-                                            processed = processed.replace(re, '');
-                                        }
-                                    }
-                                } catch (e) {
-                                    try {
-                                        const blacklist = this.getWBlacklist() || '';
-                                        for (let i = 0; i < blacklist.length; i++) {
-                                            const ch = blacklist[i];
-                                            processed = processed.split(ch).join('');
-                                        }
-                                    } catch (e2) {}
+                        // post-process client-side blacklist / lowercase
+                        let processed = String(answerText || '');
+                        try {
+                            const blacklist = this.getWBlacklist() || '';
+                            if (blacklist && blacklist.length > 0) {
+                                const escapedChars = blacklist.split('').map(ch => ch.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')).join('');
+                                if (escapedChars) {
+                                    const re = new RegExp('[' + escapedChars + ']', 'g');
+                                    processed = processed.replace(re, '');
                                 }
-
-                                if (this.getWLowercase()) processed = processed.toLowerCase();
-
-                                try {
-                                    if (tinyIframe) {
-                                        const iframeDoc = tinyIframe.contentDocument || tinyIframe.contentWindow.document;
-                                        if (iframeDoc) {
-                                            iframeDoc.body.innerHTML = processed;
-                                            setTimeout(() => {
-                                                iframeDoc.body.innerHTML += " ";
-                                                const inputEvent = new Event('input', { bubbles: true });
-                                                iframeDoc.body.dispatchEvent(inputEvent);
-                                            }, 500);
-                                        } else {
-                                            throw new Error('Unable to access iframe document');
-                                        }
-                                    } else if (plainTextarea) {
-                                        plainTextarea.value = processed;
-                                        plainTextarea.dispatchEvent(new Event('input', { bubbles: true }));
-                                    } else if (contentEditable) {
-                                        contentEditable.innerHTML = processed;
-                                        contentEditable.dispatchEvent(new Event('input', { bubbles: true }));
-                                    }
-
-                                    // stop after write insertion
-                                    this._stoppedByWrite = true;
-                                    this.isRunning = false;
-                                    try { await this.stopProcessUI(); } catch (e) {}
-                                    return false;
-                                } catch (e) {
-                                    const answerContainerEl = document.getElementById('answerContainer');
-                                    const answerContentEl = answerContainerEl ? answerContainerEl.querySelector('#answerContent') : null;
-                                    if (answerContentEl) answerContentEl.textContent = (typeof processed === 'string' ? processed : String(processed));
-                                    if (answerContainerEl) { answerContainerEl.style.display = 'flex'; answerContainerEl.style.visibility = 'visible'; answerContainerEl.classList.add('show'); }
-                                    this._stoppedByWrite = true;
-                                    this.isRunning = false;
-                                    try { await this.stopProcessUI(); } catch (e2) {}
-                                    return false;
+                            }
+                        } catch (e) {
+                            try {
+                                const blacklist = this.getWBlacklist() || '';
+                                for (let i = 0; i < blacklist.length; i++) {
+                                    const ch = blacklist[i];
+                                    processed = processed.split(ch).join('');
                                 }
-                            } else {
-                                // Multiple choice mode (unchanged)
-                                queryContent += "\n\nPROVIDE ONLY A ONE-LETTER ANSWER THAT'S IT NOTHING ELSE (A, B, C, or D).";
-                                if (excludedAnswers.length > 0) queryContent += `\n\nDo not pick letter ${excludedAnswers.join(', ')}.`;
+                            } catch (e2) { /* ignore */ }
+                        }
 
-                                try {
-                                    console.groupCollapsed('[AssessmentHelper] Sent (MC) payload');
-                                    console.log('q:', queryContent);
-                                    console.log('article:', this.cachedArticle || null);
-                                    console.groupEnd();
-                                } catch (e) {}
+                        if (this.getWLowercase()) processed = processed.toLowerCase();
 
-                                const randPct = this.getMCRandomPct();
-                                let willRandom = false;
-                                try { if (randPct > 0) willRandom = (Math.random() * 100) < randPct; } catch (e) { willRandom = false; }
-
-                                let answer = null;
-                                if (willRandom) {
-                                    const letters = ['A', 'B', 'C', 'D'].filter(l => !excludedAnswers.includes(l));
-                                    const options = document.querySelectorAll('[role="radio"]');
-                                    let chosenLetter = null;
-                                    if (options && options.length > 0) {
-                                        const available = letters.map(l => l.charCodeAt(0) - 'A'.charCodeAt(0)).filter(i => options[i]);
-                                        if (available.length > 0) {
-                                            const idx = available[Math.floor(Math.random() * available.length)];
-                                            chosenLetter = String.fromCharCode('A'.charCodeAt(0) + idx);
-                                        } else {
-                                            chosenLetter = letters[Math.floor(Math.random() * letters.length)];
-                                        }
-                                    } else {
-                                        chosenLetter = letters[Math.floor(Math.random() * letters.length)];
-                                    }
-                                    answer = chosenLetter;
-                                    try {
-                                        console.groupCollapsed('[AssessmentHelper] Random MC decision');
-                                        console.log('Random decision triggered (pct):', randPct);
-                                        console.log('Chosen letter:', chosenLetter);
-                                        console.groupEnd();
-                                    } catch (e) {}
+                        try {
+                            if (tinyIframe) {
+                                const iframeDoc = tinyIframe.contentDocument || (tinyIframe.contentWindow && tinyIframe.contentWindow.document);
+                                if (iframeDoc) {
+                                    iframeDoc.body.innerHTML = processed;
+                                    setTimeout(() => {
+                                        iframeDoc.body.innerHTML += " ";
+                                        const inputEvent = new Event('input', { bubbles: true });
+                                        iframeDoc.body.dispatchEvent(inputEvent);
+                                    }, 500);
                                 } else {
-                                    answer = await this.fetchAnswer(queryContent);
-                                    try {
-                                        console.groupCollapsed('[AssessmentHelper] Received (MC) answer');
-                                        console.log(answer);
-                                        console.groupEnd();
-                                    } catch (e) {}
+                                    throw new Error('Unable to access iframe document');
                                 }
-
-                                if (!this.isRunning) return false;
-
-                                const normalized = (answer || '').trim().toUpperCase();
-                                const answerContainerEl = document.getElementById('answerContainer');
-                                const answerContentEl = answerContainerEl ? answerContainerEl.querySelector('#answerContent') : null;
-                                if (answerContentEl) answerContentEl.textContent = normalized || answer;
-                                if (answerContainerEl) { answerContainerEl.style.display = 'flex'; answerContainerEl.style.visibility = 'visible'; answerContainerEl.classList.add('show'); }
-
-                                if (['A','B','C','D'].includes(normalized) && !excludedAnswers.includes(normalized)) {
-                                    const options = document.querySelectorAll('[role="radio"]');
-                                    const index = normalized.charCodeAt(0) - 'A'.charCodeAt(0);
-                                    if (options[index]) {
-                                        options[index].click();
-                                    } else {
-                                        if (answerContentEl) answerContentEl.textContent = `Error: Option ${normalized} not found on page.`;
-                                        return false;
-                                    }
-                                } else {
-                                    if (answerContentEl) answerContentEl.textContent = `Model returned: ${answer || 'No valid single letter'}`;
-                                    return false;
-                                }
+                            } else if (plainTextarea) {
+                                plainTextarea.value = processed;
+                                plainTextarea.dispatchEvent(new Event('input', { bubbles: true }));
+                            } else if (contentEditable) {
+                                contentEditable.innerHTML = processed;
+                                contentEditable.dispatchEvent(new Event('input', { bubbles: true }));
                             }
-                        } catch (err) {
-                            if (String(err && err.message || '').toLowerCase().includes('aborted') || (String(err) === 'Error: <<ABORTED>>')) {
-                                return false;
-                            }
+
+                            // stop after write insertion
+                            this._stoppedByWrite = true;
+                            this.isRunning = false;
+                            try { await this.stopProcessUI(); } catch (e) { /* ignore */ }
+                            return false;
+                        } catch (e) {
                             const answerContainerEl = document.getElementById('answerContainer');
                             const answerContentEl = answerContainerEl ? answerContainerEl.querySelector('#answerContent') : null;
-                            if (answerContentEl) answerContentEl.textContent = `Error: ${err && err.message ? err.message : String(err)}`;
+                            if (answerContentEl) answerContentEl.textContent = (typeof processed === 'string' ? processed : String(processed));
                             if (answerContainerEl) { answerContainerEl.style.display = 'flex'; answerContainerEl.style.visibility = 'visible'; answerContainerEl.classList.add('show'); }
+                            this._stoppedByWrite = true;
+                            this.isRunning = false;
+                            try { await this.stopProcessUI(); } catch (e2) { /* ignore */ }
                             return false;
                         }
-                    };
+                    } else {
+                        // Multiple choice mode (unchanged)
+                        queryContent += "\n\nPROVIDE ONLY A ONE-LETTER ANSWER THAT'S IT NOTHING ELSE (A, B, C, or D).";
+                        if (excludedAnswers.length > 0) queryContent += `\n\nDo not pick letter ${excludedAnswers.join(', ')}.`;
 
-                    try {
-                        while (this.isRunning) {
-                            const cont = await attemptOnce();
-                            if (!this.isRunning) break;
-                            if (!cont) break;
-                            const waitMs = Number(this.getMCWait()) || this.defaults.mc_wait;
-                            await new Promise(r => setTimeout(r, waitMs));
-                        }
-                    } finally {
-                        if (!this._stoppedByWrite) {
-                            this.isRunning = false;
-                            const spinnerEl = document.getElementById('ah-spinner');
-                            if (spinnerEl) spinnerEl.style.display = 'none';
-                            try { await this.playVideoOnce(this.getUrl('icons/gotosleep.webm')); } catch (e) {}
-                            this.setEyeToSleep();
-                            try { console.log('[AssessmentHelper] stopped'); } catch (e) {}
-                            const label = document.getElementById('getAnswerButtonText');
-                            if (label) label.textContent = 'work smArt-er';
-                            const btn = document.getElementById('getAnswerButton');
-                            if (btn) btn.classList.remove('running');
+                        try {
+                            console.groupCollapsed('[AssessmentHelper] Sent (MC) payload');
+                            console.log('q:', queryContent);
+                            console.log('article:', this.cachedArticle || null);
+                            console.groupEnd();
+                        } catch (e) { /* ignore */ }
+
+                        const randPct = this.getMCRandomPct();
+                        let willRandom = false;
+                        try { if (randPct > 0) willRandom = (Math.random() * 100) < randPct; } catch (e) { willRandom = false; }
+
+                        let answer = null;
+                        if (willRandom) {
+                            const letters = ['A', 'B', 'C', 'D'].filter(l => !excludedAnswers.includes(l));
+                            const options = document.querySelectorAll('[role="radio"]');
+                            let chosenLetter = null;
+                            if (options && options.length > 0) {
+                                const available = letters.map(l => l.charCodeAt(0) - 'A'.charCodeAt(0)).filter(i => options[i]);
+                                if (available.length > 0) {
+                                    const idx = available[Math.floor(Math.random() * available.length)];
+                                    chosenLetter = String.fromCharCode('A'.charCodeAt(0) + idx);
+                                } else {
+                                    chosenLetter = letters[Math.floor(Math.random() * letters.length)];
+                                }
+                            } else {
+                                chosenLetter = letters[Math.floor(Math.random() * letters.length)];
+                            }
+                            answer = chosenLetter;
+                            try {
+                                console.groupCollapsed('[AssessmentHelper] Random MC decision');
+                                console.log('Random decision triggered (pct):', randPct);
+                                console.log('Chosen letter:', chosenLetter);
+                                console.groupEnd();
+                            } catch (e) { /* ignore */ }
                         } else {
-                            this._stoppedByWrite = false;
+                            const answerRaw = await this.fetchAnswer(queryContent);
+                            // normalize different response shapes
+                            if (typeof answerRaw === 'string') {
+                                answer = answerRaw;
+                            } else if (answerRaw && typeof answerRaw === 'object') {
+                                answer = (answerRaw.choice || answerRaw.text || answerRaw.answer || answerRaw.response || answerRaw.result || '');
+                            } else {
+                                answer = '';
+                            }
+                            try {
+                                console.groupCollapsed('[AssessmentHelper] Received (MC) answer');
+                                console.log(answer);
+                                console.groupEnd();
+                            } catch (e) { /* ignore */ }
+                        }
+
+                        if (!this.isRunning) return false;
+
+                        const normalized = (answer || '').trim().toUpperCase();
+                        const answerContainerEl = document.getElementById('answerContainer');
+                        const answerContentEl = answerContainerEl ? answerContainerEl.querySelector('#answerContent') : null;
+                        if (answerContentEl) answerContentEl.textContent = normalized || answer;
+                        if (answerContainerEl) { answerContainerEl.style.display = 'flex'; answerContainerEl.style.visibility = 'visible'; answerContainerEl.classList.add('show'); }
+
+                        if (['A','B','C','D'].includes(normalized) && !excludedAnswers.includes(normalized)) {
+                            const options = document.querySelectorAll('[role="radio"]');
+                            const index = normalized.charCodeAt(0) - 'A'.charCodeAt(0);
+                            if (options[index]) {
+                                try { options[index].click(); } catch (e) { /* ignore click errors */ }
+                                // After selecting, request a normal loop continuation (let outer loop wait)
+                                return true;
+                            } else {
+                                if (answerContentEl) answerContentEl.textContent = `Error: Option ${normalized} not found on page.`;
+                                return false;
+                            }
+                        } else {
+                            if (answerContentEl) answerContentEl.textContent = `Model returned: ${answer || 'No valid single letter'}`;
+                            return false;
                         }
                     }
+                    // Default: request outer loop to continue (with wait)
+                    return true;
+                } catch (err) {
+                    if (String(err && err.message || '').toLowerCase().includes('aborted') || (String(err) === 'Error: <<ABORTED>>')) {
+                        return false;
+                    }
+                    const answerContainerEl = document.getElementById('answerContainer');
+                    const answerContentEl = answerContainerEl ? answerContainerEl.querySelector('#answerContent') : null;
+                    if (answerContentEl) answerContentEl.textContent = `Error: ${err && err.message ? err.message : String(err)}`;
+                    if (answerContainerEl) { answerContainerEl.style.display = 'flex'; answerContainerEl.style.visibility = 'visible'; answerContainerEl.classList.add('show'); }
+                    return false;
                 }
-            };
+            }; // end attemptOnce
 
-            try { new AssessmentHelper(); } catch (e) {}
-        }
-
-        // -------- fetch article / answer --------
-        async fetchArticleContent() {
             try {
-                const articleContainer = document.querySelector('#start-reading');
-                let articleContent = '';
-                if (articleContainer) {
-                    const paragraphs = articleContainer.querySelectorAll('p');
-                    articleContent = Array.from(paragraphs).map((p) => p.textContent.trim()).join(' ');
+                while (this.isRunning) {
+                    const cont = await attemptOnce();
+                    if (!this.isRunning) break;
+                    if (!cont) break;
+                    const waitMs = Number(this.getMCWait()) || this.defaults.mc_wait;
+                    await new Promise(r => setTimeout(r, waitMs));
                 }
-
-                const questionContainer = document.querySelector('#activity-component-react') || document.querySelector('#question-text');
-                let questionContent = '';
-                if (questionContainer) questionContent = questionContainer.textContent.trim();
-
-                let writingQuestion = '';
-                try {
-                    const xpath = '//*[@id="before-reading-thought"]/div[1]/p/div';
-                    const result = document.evaluate(xpath, document, null, XPathResult.STRING_TYPE, null);
-                    writingQuestion = (result && result.stringValue) ? result.stringValue.trim() : '';
-                } catch (e) {
-                    writingQuestion = '';
+            } finally {
+                if (!this._stoppedByWrite) {
+                    this.isRunning = false;
+                    const spinnerEl = document.getElementById('ah-spinner');
+                    if (spinnerEl) spinnerEl.style.display = 'none';
+                    try { await this.playVideoOnce(this.getUrl('icons/gotosleep.webm')); } catch (e) { /* ignore */ }
+                    this.setEyeToSleep();
+                    try { console.log('[AssessmentHelper] stopped'); } catch (e) { /* ignore */ }
+                    const label = document.getElementById('getAnswerButtonText');
+                    if (label) label.textContent = 'work smArt-er';
+                    const btn = document.getElementById('getAnswerButton');
+                    if (btn) btn.classList.remove('running');
+                } else {
+                    this._stoppedByWrite = false;
                 }
-
-                const combinedContent = `${articleContent}\n\n${questionContent}\n\n${writingQuestion}`;
-                this.cachedArticle = combinedContent;
-                return combinedContent;
-            } catch (err) {
-                return '';
             }
         }
 
@@ -2154,3 +2148,4 @@ async fetchAnswer(queryContent, retryCount = 0) {
 
     try { new AssessmentHelper(); } catch (e) {}
 })();
+
