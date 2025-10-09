@@ -235,7 +235,7 @@
             getAnswerButton.appendChild(buttonTextSpan);
 
             // Version remains visible always
-            const version = this.createEl('div', { id: 'ah-version', style: 'position:absolute;bottom:8px;right:8px;font-size:12px;opacity:0.9;z-index:100005', text: '1.2.1' });
+            const version = this.createEl('div', { id: 'ah-version', style: 'position:absolute;bottom:8px;right:8px;font-size:12px;opacity:0.9;z-index:100005', text: '1.0' });
 
             // SETTINGS COG (bottom-left)
             const settingsCog = this.createEl('button', {
@@ -1027,10 +1027,32 @@
             modelRow.appendChild(modelLabel); modelRow.appendChild(modelInput);
             panel.appendChild(modelRow);
 
-            methodToggle.addEventListener('change', () => { this.saveSetting(this.settingsKeys.ai_use_api, methodToggle.checked ? 'true' : 'false'); });
-            urlInput.addEventListener('change', () => { this.saveSetting(this.settingsKeys.ai_groq_url, urlInput.value || ''); });
-            keyInput.addEventListener('change', () => { this.saveSetting(this.settingsKeys.ai_groq_key, keyInput.value || ''); });
-            modelInput.addEventListener('change', () => { this.saveSetting(this.settingsKeys.ai_groq_model, modelInput.value || 'llama-3.1-8b-instant'); });
+            // show/hide Cloudflare vs direct API fields based on toggle
+            function setAiVisibility(useApi) {
+                // API fields (show when useApi === true)
+                if (typeof urlRow !== 'undefined' && urlRow) urlRow.style.display = useApi ? 'flex' : 'none';
+                if (typeof keyRow !== 'undefined' && keyRow) keyRow.style.display = useApi ? 'flex' : 'none';
+                if (typeof modelRow !== 'undefined' && modelRow) modelRow.style.display = useApi ? 'flex' : 'none';
+                // Cloudflare fields (show when useApi === false)
+                if (typeof cfAskRow !== 'undefined' && cfAskRow) cfAskRow.style.display = useApi ? 'none' : 'flex';
+                if (typeof cfDataRow !== 'undefined' && cfDataRow) cfDataRow.style.display = useApi ? 'none' : 'flex';
+                if (typeof cfOtherRow !== 'undefined' && cfOtherRow) cfOtherRow.style.display = useApi ? 'none' : 'flex';
+            }
+
+            // initialize visibility based on current toggle state
+            setAiVisibility(methodToggle.checked);
+
+            // persist toggle + update visibility when changed
+            methodToggle.addEventListener('change', () => {
+                this.saveSetting(this.settingsKeys.ai_use_api, methodToggle.checked ? 'true' : 'false');
+                setAiVisibility(methodToggle.checked);
+            });
+
+            // keep existing input change handlers (persist values when changed)
+            urlInput.addEventListener('change', () => this.saveSetting(this.settingsKeys.ai_groq_url, urlInput.value || ''));
+            keyInput.addEventListener('change', () => this.saveSetting(this.settingsKeys.ai_groq_key, keyInput.value || ''));
+            modelInput.addEventListener('change', () => this.saveSetting(this.settingsKeys.ai_groq_model, modelInput.value || 'llama-3.1-8b-instant'));
+
 
             // ensure saved defaults persisted
             this.saveSetting(this.settingsKeys.ai_groq_url, urlInput.value);
@@ -1773,3 +1795,4 @@
 
     try { new AssessmentHelper(); } catch (e) { }
 })();
+
