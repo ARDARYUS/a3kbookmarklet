@@ -1,7 +1,7 @@
 // AssessmentHelper — Ready/Reflect: click radio but do NOT submit; then write justification in TinyMCE or other editor
     (function () {
         try { console.clear(); } catch (e) { }
-        console.log('[AssessmentHelper] injected');
+        console.log('[smArt] injected');
 
         try {
             if (document.getElementById('Launcher')) {
