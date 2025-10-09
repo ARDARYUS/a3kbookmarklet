@@ -22,6 +22,7 @@
             this.isRunning = false;
             this.currentAbortController = null;
             this._stoppedByWrite = false;
+            this._apiCallCounter = 0; // counter used to rotate API keys every 2 prompts
 
             this.eyeState = 'sleep';
             this.currentVideo = null;
@@ -413,20 +414,44 @@
                 let response;
 
                 if (useDirectApi) {
-                    // read groq/openai settings (try both settingsKeys and legacy keys)
+                    // Read base URL & model as before
                     const groqUrl = (this.settingsKeys && localStorage.getItem(this.settingsKeys.ai_groq_url))
                         || localStorage.getItem('ah_ai_groq_url')
                         || 'https://api.groq.com/openai/v1/chat/completions';
-
-                    const groqKey = (this.settingsKeys && localStorage.getItem(this.settingsKeys.ai_groq_key))
-                        || localStorage.getItem('ah_ai_groq_key') || '';
 
                     const groqModel = (this.settingsKeys && localStorage.getItem(this.settingsKeys.ai_groq_model))
                         || localStorage.getItem('ah_ai_groq_model')
                         || 'llama-3.1-8b-instant';
 
-                    // Build OpenAI-style chat payload
-                    const chatPayload = {
+                    // Load keys array from storage (new multi-key support). Fall back to single legacy key if present.
+                    let groqKeys = [];
+                    try {
+                        groqKeys = JSON.parse(localStorage.getItem('ah_ai_groq_keys') || '[]');
+                        if (!Array.isArray(groqKeys)) groqKeys = [];
+                    } catch (e) {
+                        groqKeys = [];
+                    }
+                    // legacy single-key fallback
+                    const legacyKey = (this.settingsKeys && localStorage.getItem(this.settingsKeys.ai_groq_key)) || localStorage.getItem('ah_ai_groq_key') || '';
+                    if (legacyKey && groqKeys.length === 0) groqKeys = [legacyKey];
+
+                    // Ensure at least one element in array (may be empty string)
+                    if (groqKeys.length === 0) groqKeys = [legacyKey || ''];
+
+                    // Advance call counter and compute which key index to use.
+                    // We change key every 2 prompts: index = floor((callCount-1)/2) % groqKeys.length
+                    this._apiCallCounter = (this._apiCallCounter || 0) + 1;
+                    const keyIndex = Math.floor((this._apiCallCounter - 1) / 2) % Math.max(1, groqKeys.length);
+                    const groqKeyToUse = (groqKeys[keyIndex]) ? String(groqKeys[keyIndex]) : '';
+
+                    // Compatibility: some code expects a variable named `groqKey`, so keep it in sync
+                    const groqKey = groqKeyToUse;
+
+                    // Debug
+                    try { console.debug(`[AssessmentHelper] using API key slot ${keyIndex + 1} / ${groqKeys.length}`); } catch (e) { }
+
+                    // Build payload (renamed variable to avoid collisions)
+                    const ah_chatPayload = {
                         model: groqModel,
                         messages: [
                             { role: 'user', content: (queryContent || '') + (this.cachedArticle ? `\n\nArticle:\n${this.cachedArticle}` : '') }
@@ -434,16 +459,67 @@
                         max_tokens: 1024
                     };
 
-                    response = await fetch(groqUrl, {
-                        method: 'POST',
-                        headers: {
-                            'Accept': 'application/json',
-                            'Content-Type': 'application/json',
-                            ...(groqKey ? { 'Authorization': 'Bearer ' + groqKey } : {})
-                        },
-                        body: JSON.stringify(chatPayload),
-                        signal
-                    });
+                    // --- SINGLE-FETCH + KEY-ROTATION-ON-429/500 ---
+                    // Try up to `groqKeys.length` different keys (starting from computed keyIndex).
+                    // On 429 or 500: wait 1s, rotate to next key and retry.
+                    // This prevents sending multiple immediate requests per logical call.
+                    const keyCount = Math.max(1, groqKeys.length);
+                    response = null;
+                    let lastError = null;
+
+                    for (let keyTry = 0; keyTry < keyCount; keyTry++) {
+                        const tryIndex = (keyIndex + keyTry) % keyCount;
+                        const tryKey = (groqKeys[tryIndex]) ? String(groqKeys[tryIndex]) : '';
+                        const authHeader = tryKey ? { 'Authorization': 'Bearer ' + tryKey } : {};
+
+                        try {
+                            // single fetch attempt for this key
+                            response = await fetch(groqUrl, {
+                                method: 'POST',
+                                headers: {
+                                    'Accept': 'application/json',
+                                    'Content-Type': 'application/json',
+                                    ...authHeader
+                                },
+                                body: JSON.stringify(ah_chatPayload),
+                                signal
+                            });
+                        } catch (err) {
+                            // network/abort error — keep lastError and try next key after 1s
+                            lastError = err;
+                            // If aborted, rethrow immediately to preserve abort semantics
+                            if (err && err.name === 'AbortError') {
+                                throw err;
+                            }
+                            // wait then try next key
+                            await new Promise(r => setTimeout(r, 1000));
+                            continue;
+                        }
+
+                        // If response is OK, stop rotating and continue normal processing below.
+                        if (response && response.ok) {
+                            break;
+                        }
+
+                        // If we got a 429 or 500, wait 1s, then try next key
+                        if (response && (response.status === 429 || response.status === 500)) {
+                            try {
+                                await new Promise(r => setTimeout(r, 1000));
+                            } catch (e) { /* ignore */ }
+                            // continue loop to try next key
+                            continue;
+                        }
+
+                        // For other non-OK statuses, break and let outer error handling decide.
+                        break;
+                    }
+
+                    // If we never received any response object (all attempts threw), propagate lastError
+                    if (!response && lastError) {
+                        throw lastError;
+                    }
+                    // --- end single-fetch replacement ---
+
                 } else {
                     // proxy flow (Cloudflare /ask) — read the user-configured endpoint from settings/localStorage
                     const cfKey = (this.settingsKeys && this.settingsKeys.cloudflare_ask) ? this.settingsKeys.cloudflare_ask : 'ah_cloudflare_ask'
@@ -1003,6 +1079,129 @@
             // -----------------------------------------------------------
 
 
+            // ---------------- Multi-key API UI + show/hide Cloudflare vs direct API fields ----------------
+
+            // localStorage keys we will use:
+            // 'ah_ai_api_count'     -> number (1..10) how many API slots
+            // 'ah_ai_groq_keys'     -> JSON array of API key strings (indexed 0..n-1)
+
+            const API_COUNT_KEY = 'ah_ai_api_count';
+            const API_KEYS_KEY = 'ah_ai_groq_keys';
+
+            // Api count row (user chooses how many API slots they have)
+            const apiCountRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;width:100%;' });
+            const apiCountLabel = this.createEl('label', { text: 'Number of API keys (1–10):', style: 'min-width:160px;' });
+            const apiCountInput = this.createEl('input', { type: 'number', id: 'aiApiCountInput', min: 1, max: 10, value: String(Number(localStorage.getItem(API_COUNT_KEY) || 1)) });
+            // Apply button placed right after the input as requested
+            const apiCountConfirm = this.createEl('button', { text: 'Apply', style: 'padding:6px 8px;border-radius:6px;background:#222;border:1px solid rgba(255,255,255,0.04);color:white;cursor:pointer;' });
+            apiCountRow.appendChild(apiCountLabel); apiCountRow.appendChild(apiCountInput); apiCountRow.appendChild(apiCountConfirm);
+            panel.appendChild(apiCountRow);
+
+            // container where per-key rows will live (will render N rows below the count)
+            const apiKeysContainer = this.createEl('div', { id: 'apiKeysContainer', style: 'display:flex;flex-direction:column;gap:6px;margin-bottom:8px;width:100%;' });
+            panel.appendChild(apiKeysContainer);
+
+            // Note: modelRow and urlRow are expected to exist elsewhere in the function
+            // helper: load keys array from localStorage (return array of strings)
+            function loadKeysArray() {
+                try {
+                    const raw = localStorage.getItem(API_KEYS_KEY) || '[]';
+                    const arr = JSON.parse(raw);
+                    return Array.isArray(arr) ? arr : [];
+                } catch (e) {
+                    return [];
+                }
+            }
+
+            // helper: persist keys array
+            function saveKeysArray(arr) {
+                try {
+                    localStorage.setItem(API_KEYS_KEY, JSON.stringify(arr.map(k => String(k || ''))));
+                } catch (e) { }
+            }
+
+            // build individual key rows inside apiKeysContainer
+            function buildApiKeyRows(count) {
+                // clamp
+                if (!Number.isFinite(count) || count < 1) count = 1;
+                if (count > 10) count = 10;
+
+                // load existing saved keys, and fall back to the single legacy key if present
+                let keys = loadKeysArray();
+                const legacySingle = localStorage.getItem((this && this.settingsKeys && this.settingsKeys.ai_groq_key) ? this.settingsKeys.ai_groq_key : 'ah_ai_groq_key') || localStorage.getItem('ah_ai_groq_key') || '';
+                if (keys.length === 0 && legacySingle) keys[0] = legacySingle;
+
+                // ensure array length = count
+                while (keys.length < count) keys.push('');
+                if (keys.length > count) keys = keys.slice(0, count);
+
+                // render rows
+                apiKeysContainer.innerHTML = '';
+                for (let i = 0; i < count; i++) {
+                    const row = document.createElement('div');
+                    row.style = 'display:flex;align-items:center;gap:8px;';
+                    const lbl = document.createElement('label');
+                    lbl.style.minWidth = '160px';
+                    lbl.textContent = `API key #${i + 1}:`;
+                    const inp = document.createElement('input');
+                    inp.type = 'text';
+                    inp.value = keys[i] || '';
+                    inp.placeholder = 'paste key here';
+                    inp.style = 'flex:1;padding:6px;border:1px solid #ccc;border-radius:4px;';
+                    inp.id = `aiGroqKeyInput_${i}`;
+                    const reset = document.createElement('span');
+                    reset.className = 'ah-reset';
+                    reset.textContent = '↺';
+                    reset.title = 'Clear';
+                    reset.style.cursor = 'pointer';
+                    reset.addEventListener('click', () => { inp.value = ''; keys[i] = ''; saveKeysArray(keys); });
+
+                    inp.addEventListener('change', () => { keys[i] = inp.value || ''; saveKeysArray(keys); });
+
+                    row.appendChild(lbl);
+                    row.appendChild(inp);
+                    row.appendChild(reset);
+                    apiKeysContainer.appendChild(row);
+                }
+
+                // persist count and keys
+                try { localStorage.setItem(API_COUNT_KEY, String(count)); } catch (e) { }
+                saveKeysArray(keys);
+            }
+
+            // When user clicks Apply, rebuild key rows to the chosen count
+            apiCountConfirm.addEventListener('click', () => {
+                let n = Number(apiCountInput.value) || 1;
+                if (n < 1) n = 1;
+                if (n > 10) n = 10;
+                apiCountInput.value = String(n);
+                buildApiKeyRows.call(this, n);
+            });
+
+            // initialize keys UI from storage (respect saved count)
+            const initialCount = Math.min(10, Math.max(1, Number(localStorage.getItem(API_COUNT_KEY) || 1)));
+            apiCountInput.value = String(initialCount);
+            buildApiKeyRows.call(this, initialCount);
+
+            // show/hide fields based on toggle (if unchecked => Cloudflare mode => hide ALL API UI)
+            function setAiVisibility(useApi) {
+                // API fields (show when useApi === true)
+                if (typeof apiCountRow !== 'undefined' && apiCountRow) apiCountRow.style.display = useApi ? 'flex' : 'none';
+                if (typeof apiKeysContainer !== 'undefined' && apiKeysContainer) apiKeysContainer.style.display = useApi ? 'flex' : 'none';
+                if (typeof modelRow !== 'undefined' && modelRow) modelRow.style.display = useApi ? 'flex' : 'none';
+                if (typeof urlRow !== 'undefined' && urlRow) urlRow.style.display = useApi ? 'flex' : 'none';
+                // Cloudflare fields (show when useApi === false)
+                if (typeof cfAskRow !== 'undefined' && cfAskRow) cfAskRow.style.display = useApi ? 'none' : 'flex';
+                if (typeof cfDataRow !== 'undefined' && cfDataRow) cfDataRow.style.display = useApi ? 'none' : 'flex';
+                if (typeof cfOtherRow !== 'undefined' && cfOtherRow) cfOtherRow.style.display = useApi ? 'none' : 'flex';
+            }
+
+            // persist toggle + update visibility when changed
+            methodToggle.addEventListener('change', () => {
+                this.saveSetting(this.settingsKeys.ai_use_api, methodToggle.checked ? 'true' : 'false');
+                setAiVisibility(methodToggle.checked);
+            });
+
             const urlRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;width:100%;' });
             const urlLabel = this.createEl('label', { text: 'Groq URL:', style: 'min-width:160px;' });
             const urlInput = this.createEl('input', { type: 'text', id: 'aiGroqUrlInput', value: localStorage.getItem(this.settingsKeys.ai_groq_url) || 'https://api.groq.com/openai/v1/chat/completions', style: 'flex:1;' });
@@ -1012,47 +1211,15 @@
             urlRow.appendChild(urlLabel); urlRow.appendChild(urlInput); urlRow.appendChild(urlReset);
             panel.appendChild(urlRow);
 
-            const keyRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;width:100%;' });
-            const keyLabel = this.createEl('label', { text: 'Groq API key:', style: 'min-width:160px;' });
-            const keyInput = this.createEl('input', { type: 'text', id: 'aiGroqKeyInput', value: localStorage.getItem(this.settingsKeys.ai_groq_key) || '', placeholder: 'paste your key here', style: 'flex:1;' });
-            const keyReset = this.createEl('span', { className: 'ah-reset', text: '↺', title: 'Clear key' });
-            keyReset.addEventListener('click', () => { keyInput.value = ''; localStorage.removeItem(this.settingsKeys.ai_groq_key); });
-
-            keyRow.appendChild(keyLabel); keyRow.appendChild(keyInput); keyRow.appendChild(keyReset);
-            panel.appendChild(keyRow);
-
             const modelRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;width:100%;' });
             const modelLabel = this.createEl('label', { text: 'Model:', style: 'min-width:160px;' });
             const modelInput = this.createEl('input', { type: 'text', id: 'aiGroqModelInput', value: localStorage.getItem(this.settingsKeys.ai_groq_model) || 'llama-3.1-8b-instant', style: 'flex:1;' });
             modelRow.appendChild(modelLabel); modelRow.appendChild(modelInput);
             panel.appendChild(modelRow);
 
-            // show/hide Cloudflare vs direct API fields based on toggle
-            function setAiVisibility(useApi) {
-                // API fields (show when useApi === true)
-                if (typeof urlRow !== 'undefined' && urlRow) urlRow.style.display = useApi ? 'flex' : 'none';
-                if (typeof keyRow !== 'undefined' && keyRow) keyRow.style.display = useApi ? 'flex' : 'none';
-                if (typeof modelRow !== 'undefined' && modelRow) modelRow.style.display = useApi ? 'flex' : 'none';
-                // Cloudflare fields (show when useApi === false)
-                if (typeof cfAskRow !== 'undefined' && cfAskRow) cfAskRow.style.display = useApi ? 'none' : 'flex';
-                if (typeof cfDataRow !== 'undefined' && cfDataRow) cfDataRow.style.display = useApi ? 'none' : 'flex';
-                if (typeof cfOtherRow !== 'undefined' && cfOtherRow) cfOtherRow.style.display = useApi ? 'none' : 'flex';
-            }
-
-            // initialize visibility based on current toggle state
-            setAiVisibility(methodToggle.checked);
-
-            // persist toggle + update visibility when changed
-            methodToggle.addEventListener('change', () => {
-                this.saveSetting(this.settingsKeys.ai_use_api, methodToggle.checked ? 'true' : 'false');
-                setAiVisibility(methodToggle.checked);
-            });
-
-            // keep existing input change handlers (persist values when changed)
+            // ensure controls persist model & url as before
             urlInput.addEventListener('change', () => this.saveSetting(this.settingsKeys.ai_groq_url, urlInput.value || ''));
-            keyInput.addEventListener('change', () => this.saveSetting(this.settingsKeys.ai_groq_key, keyInput.value || ''));
             modelInput.addEventListener('change', () => this.saveSetting(this.settingsKeys.ai_groq_model, modelInput.value || 'llama-3.1-8b-instant'));
-
 
             // ensure saved defaults persisted
             this.saveSetting(this.settingsKeys.ai_groq_url, urlInput.value);
