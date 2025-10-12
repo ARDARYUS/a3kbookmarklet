@@ -1440,7 +1440,7 @@
 
                             if (readyQuestion) {
                                 try {
-                                    console.groupCollapsed('[AssessmentHelper] Ready/Reflect detected — question fetched');
+                                    console.groupCollapsed('[smArt] Ready/Reflect detected — question fetched');
                                     console.log(readyQuestion);
                                     console.groupEnd();
                                 } catch (e) { }
@@ -1458,9 +1458,9 @@
 
                                 // If radio buttons exist — decide and click but DO NOT submit
                                 if (agreeNode || disagreeNode) {
-                                    const prompt = `${readyQuestion}\n\nDecide whether you AGREE or DISAGREE with this statement. Respond with exactly one word: AGREE or DISAGREE.`;
+                                    const prompt = `${readyQuestion}\n\nDecide whether you AGREE or DISAGREE with this statement. Respond with exactly one word: AGREE or DISAGREE. NOTHING ELSE`;
                                     try {
-                                        console.groupCollapsed('[AssessmentHelper] Sent (Ready/Reflect classification) payload');
+                                        console.groupCollapsed('[smArt] Sent (Ready/Reflect classification) payload');
                                         console.log('q:', prompt);
                                         console.log('article:', this.cachedArticle || null);
                                         console.groupEnd();
@@ -1468,7 +1468,7 @@
 
                                     const classification = await this.fetchAnswer(prompt);
                                     try {
-                                        console.groupCollapsed('[AssessmentHelper] Received (Ready/Reflect) classification');
+                                        console.groupCollapsed('[smArt] Received (Ready/Reflect) classification');
                                         console.log(classification);
                                         console.groupEnd();
                                     } catch (e) { }
@@ -1487,15 +1487,15 @@
                                     try {
                                         if (pickAgree && agreeNode) {
                                             agreeNode.click();
-                                            console.log('[AssessmentHelper] Clicked: agree');
+                                            console.log('[smArt] Clicked: agree');
                                         } else if (!pickAgree && disagreeNode) {
                                             disagreeNode.click();
-                                            console.log('[AssessmentHelper] Clicked: disagree');
+                                            console.log('[smArt] Clicked: disagree');
                                         } else {
-                                            console.log('[AssessmentHelper] Radio target missing for chosen option.');
+                                            console.log('[smArt] Radio target missing for chosen option.');
                                         }
                                     } catch (e) {
-                                        console.log('[AssessmentHelper] Error clicking radio:', e && e.message);
+                                        console.log('[smArt] Error clicking radio:', e && e.message);
                                     }
 
                                     // --- build justification prompt that uses the user's writing settings ---
@@ -1519,10 +1519,10 @@
                                     if (mood) justificationPrompt += `${mood} `;
 
                                     // Final instruction: produce a short justification paragraph starting with the starter
-                                    justificationPrompt += `Provide a concise justification starting with "${starter}" and keep it as one coherent paragraph. Respond only with the justification (no extra commentary).`;
+                                    justificationPrompt += `Provide a concise justification starting with "${starter}" and keep it as one coherent paragraph. Respond only with the justification (no extra commentary), You are a student. Think carefully before writing, but do not describe your thought process. Do not say things like “here’s how” or “step-by-step.” Just write the final, complete answer clearly and directly. Do not start with phrases like “Sure,” “Here’s your essay,” or anything similar. Write naturally, as a student would.`;
 
                                     try {
-                                        console.groupCollapsed('[AssessmentHelper] Sent (Ready/Reflect justification) payload');
+                                        console.groupCollapsed('[smArt] Sent (Ready/Reflect justification) payload');
                                         console.log('q:', justificationPrompt);
                                         console.groupEnd();
                                     } catch (e) { }
@@ -1607,7 +1607,7 @@
 
                                 // else — no radios present, treat as writing target
                                 {
-                                    let writingPrompt = `Please provide a detailed written answer based on the following question: ${readyQuestion}`;
+                                    let writingPrompt = `Please provide a detailed written answer based on the following question: ${readyQuestion}, You are a student. Think carefully before writing, but do not describe your thought process. Do not say things like “here’s how” or “step-by-step.” Just write the final, complete answer clearly and directly. Do not start with phrases like “Sure,” “Here’s your essay,” or anything similar. Write naturally, as a student would.`;
                                     const level = this.getWLevel();
                                     const minWords = this.getWMin();
                                     const maxWords = this.getWMax();
@@ -1623,7 +1623,7 @@
                                     if (mood) writingPrompt += ` ${mood}`;
 
                                     try {
-                                        console.groupCollapsed('[AssessmentHelper] Sent (Ready/Reflect writing) payload');
+                                        console.groupCollapsed('[smArt] Sent (Ready/Reflect writing) payload');
                                         console.log('q:', writingPrompt);
                                         console.groupEnd();
                                     } catch (e) { }
@@ -1655,7 +1655,7 @@
                                     }
 
                                     try {
-                                        console.groupCollapsed('[AssessmentHelper] Received (Ready/Reflect writing) answer (processed)');
+                                        console.groupCollapsed('[smArt] Received (Ready/Reflect writing) answer (processed)');
                                         console.log(answerTextProcessed);
                                         console.groupEnd();
                                     } catch (e) { }
@@ -1710,12 +1710,12 @@
                             } // end if readyQuestion exists
                         } // end ready/reflect URL check
                     } catch (e) {
-                        console.warn('[AssessmentHelper] Ready/Reflect handler error', e && e.message);
+                        console.warn('[smArt] Ready/Reflect handler error', e && e.message);
                     }
 
                     // Normal writing detection (non-ready/reflect)
                     if (tinyIframe || plainTextarea || contentEditable) {
-                        let queryContentWriting = queryContent + "\n\nPlease provide a detailed written answer based on the above article and question.";
+                        let queryContentWriting = queryContent + "\n\n You are a student. Write a detailed answer based on the article and question above. Think carefully before writing, but do not describe your thought process. Do not say things like “here’s how” or “step-by-step.” Just write the final, complete answer clearly and directly. Do not start with phrases like “Sure,” “Here’s your essay,” or anything similar. Write naturally, as a student would.";
                         // append the user's writing settings
                         const level = this.getWLevel();
                         const minWords = this.getWMin();
@@ -1728,7 +1728,7 @@
                         if (mood) queryContentWriting += ` ${mood}`;
 
                         try {
-                            console.groupCollapsed('[AssessmentHelper] Sent (writing) payload');
+                            console.groupCollapsed('[smArt] Sent (writing) payload');
                             console.log('q:', queryContentWriting);
                             console.log('article:', this.cachedArticle || null);
                             console.groupEnd();
@@ -1737,7 +1737,7 @@
                         const answerText = await this.fetchAnswer(queryContentWriting);
 
                         try {
-                            console.groupCollapsed('[AssessmentHelper] Received (writing) answer');
+                            console.groupCollapsed('[smArt] Received (writing) answer');
                             console.log(answerText);
                             console.groupEnd();
                         } catch (e) { }
@@ -1809,7 +1809,7 @@
                         if (excludedAnswers.length > 0) queryContent += `\n\nDo not pick letter ${excludedAnswers.join(', ')}.`;
 
                         try {
-                            console.groupCollapsed('[AssessmentHelper] Sent (MC) payload');
+                            console.groupCollapsed('[smArt] Sent (MC) payload');
                             console.log('q:', queryContent);
                             console.log('article:', this.cachedArticle || null);
                             console.groupEnd();
@@ -1837,7 +1837,7 @@
                             }
                             answer = chosenLetter;
                             try {
-                                console.groupCollapsed('[AssessmentHelper] Random MC decision');
+                                console.groupCollapsed('[smArt] Random MC decision');
                                 console.log('Random decision triggered (pct):', randPct);
                                 console.log('Chosen letter:', chosenLetter);
                                 console.groupEnd();
@@ -1845,7 +1845,7 @@
                         } else {
                             answer = await this.fetchAnswer(queryContent);
                             try {
-                                console.groupCollapsed('[AssessmentHelper] Received (MC) answer');
+                                console.groupCollapsed('[smArt] Received (MC) answer');
                                 console.log(answer);
                                 console.groupEnd();
                             } catch (e) { }
@@ -1948,7 +1948,7 @@
                     if (spinnerEl) spinnerEl.style.display = 'none';
                     try { await this.playVideoOnce(this.getUrl('icons/gotosleep.webm')); } catch (e) { }
                     this.setEyeToSleep();
-                    try { console.log('[AssessmentHelper] stopped'); } catch (e) { }
+                    try { console.log('[smArt] stopped'); } catch (e) { }
                     const label = document.getElementById('getAnswerButtonText');
                     if (label) label.textContent = 'work smArt-er';
                     const btn = document.getElementById('getAnswerButton');
@@ -1962,4 +1962,3 @@
 
     try { new AssessmentHelper(); } catch (e) { }
 })();
-
