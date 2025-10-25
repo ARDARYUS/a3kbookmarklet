@@ -2,10 +2,10 @@
 // Removes: Ready/Reflect/Writing/Agree-Disagree logic + Cloudflare proxy.
 // Keeps: UI, animations, MC settings, Groq/OpenAI-compatible API w/ key rotation.
 (function () {
-  try { console.clear(); } catch (e) {}
+  try { console.clear(); } catch (e) { }
   console.log('[smArt] injected (MC-only)');
 
-  try { if (document.getElementById('Launcher')) { return; } } catch (e) {}
+  try { if (document.getElementById('Launcher')) { return; } } catch (e) { }
 
   class AssessmentHelper {
     constructor() {
@@ -61,7 +61,7 @@
     }
 
     // -------- utility: settings storage --------
-    saveSetting(key, value) { try { localStorage.setItem(key, String(value)); } catch (e) {} }
+    saveSetting(key, value) { try { localStorage.setItem(key, String(value)); } catch (e) { } }
     loadSetting(key, fallback) { try { const v = localStorage.getItem(key); return (v === null || v === undefined) ? fallback : v; } catch (e) { return fallback; } }
 
     // MC getters
@@ -115,8 +115,8 @@
     // -------- init / UI creation --------
     async init() {
       try {
-        await Promise.resolve(this.loadScript(this.animeScriptUrl)).catch(() => {});
-        await Promise.resolve(this.loadScript(this.draggabillyScriptUrl)).catch(() => {});
+        await Promise.resolve(this.loadScript(this.animeScriptUrl)).catch(() => { });
+        await Promise.resolve(this.loadScript(this.draggabillyScriptUrl)).catch(() => { });
 
         this.itemMetadata = { UI: this.createUI(), answerUI: this.createAnswerUI() };
         this.playIntroAnimation();
@@ -124,7 +124,7 @@
         try {
           this.itemMetadata = { UI: this.createUI(), answerUI: this.createAnswerUI() };
           this.showUI(true);
-        } catch (e) {}
+        } catch (e) { }
       }
     }
 
@@ -242,7 +242,7 @@
       });
       document.body.appendChild(introImgElement);
 
-      anime.timeline({ easing: 'easeInOutQuad', duration: 800, complete: () => { try { introImgElement.remove(); } catch (e) {} this.showUI(); } })
+      anime.timeline({ easing: 'easeInOutQuad', duration: 800, complete: () => { try { introImgElement.remove(); } catch (e) { } this.showUI(); } })
         .add({ targets: introImgElement, opacity: [0, 1], scale: [0.5, 1], rotate: '1turn', duration: 1000, easing: 'easeOutExpo' })
         .add({ targets: introImgElement, translateY: '-=20', duration: 500, easing: 'easeInOutSine' })
         .add({ targets: introImgElement, translateY: '+=20', duration: 500, easing: 'easeInOutSine' })
@@ -250,7 +250,7 @@
     }
 
     showUI(skipAnimation = false) {
-      try { document.body.appendChild(this.itemMetadata.UI); document.body.appendChild(this.itemMetadata.answerUI); } catch (e) {}
+      try { document.body.appendChild(this.itemMetadata.UI); document.body.appendChild(this.itemMetadata.answerUI); } catch (e) { }
       const launcher = document.getElementById('Launcher');
       if (!launcher) { this.setupEventListeners(); return; }
       if (skipAnimation) {
@@ -296,7 +296,7 @@
     async fetchAnswer(queryContent, retryCount = 0) {
       const MAX_RETRIES = 3, RETRY_DELAY_MS = 1000;
       try {
-        if (this.currentAbortController) { try { this.currentAbortController.abort(); } catch (e) {} }
+        if (this.currentAbortController) { try { this.currentAbortController.abort(); } catch (e) { } }
         this.currentAbortController = new AbortController();
         const signal = this.currentAbortController.signal;
 
@@ -398,7 +398,7 @@
         img.src = this.getUrl('icons/sleep.gif');
         this.eyeState = 'sleep';
         img.style.opacity = '1';
-      } catch (err) {}
+      } catch (err) { }
     }
 
     setEyeToFull() {
@@ -411,7 +411,7 @@
         video.style.display = 'none';
         img.style.display = 'block';
         img.src = this.getUrl('icons/full.gif') + '?r=' + Date.now();
-      } catch (err) {}
+      } catch (err) { }
     }
 
     async handleHoverEnter() {
@@ -426,7 +426,7 @@
         img.style.display = 'block';
         img.src = this.getUrl('icons/idle.gif') + '?r=' + Date.now();
         this.eyeState = 'idle';
-      } catch (err) {}
+      } catch (err) { }
     }
 
     async handleHoverLeave() {
@@ -435,7 +435,7 @@
         await this.playVideoOnce(this.getUrl('icons/gotosleep.webm'));
         if (this.eyeState === 'full') return;
         this.setEyeToSleep();
-      } catch (err) {}
+      } catch (err) { }
     }
 
     playVideoOnce(src) {
@@ -468,12 +468,12 @@
         const video = document.getElementById('helperEyeVideo');
         const img = document.getElementById('helperEyeImg');
         if (!video || !img) return;
-        try { if (!video.paused) video.pause(); } catch (e) {}
-        try { video.removeAttribute('src'); video.load(); } catch (e) {}
+        try { if (!video.paused) video.pause(); } catch (e) { }
+        try { video.removeAttribute('src'); video.load(); } catch (e) { }
         video.style.display = 'none';
         img.style.display = 'block';
         this.currentVideo = null;
-      } catch (err) {}
+      } catch (err) { }
     }
 
     // -------- UI start/stop --------
@@ -484,7 +484,7 @@
       if (btn) btn.classList.add('running');
       if (spinner) spinner.style.display = 'block';
       if (label) label.textContent = 'stop.';
-      try { console.log('[AssessmentHelper] started'); } catch (e) {}
+      try { console.log('[AssessmentHelper] started'); } catch (e) { }
     }
 
     async stopProcessUI() {
@@ -494,14 +494,14 @@
       if (btn) btn.classList.remove('running');
       if (spinner) spinner.style.display = 'none';
       if (label) label.textContent = 'work smArt-er';
-      try { console.log('[AssessmentHelper] stopped'); } catch (e) {}
-      try { await this.playVideoOnce(this.getUrl('icons/gotosleep.webm')); } catch (e) {}
+      try { console.log('[AssessmentHelper] stopped'); } catch (e) { }
+      try { await this.playVideoOnce(this.getUrl('icons/gotosleep.webm')); } catch (e) { }
       this.setEyeToSleep();
     }
 
     stopProcessImmediate() {
       this.isRunning = false;
-      if (this.currentAbortController) { try { this.currentAbortController.abort(); } catch (e) {} this.currentAbortController = null; }
+      if (this.currentAbortController) { try { this.currentAbortController.abort(); } catch (e) { } this.currentAbortController = null; }
     }
 
     // -------- Settings UI (MC + AI only) --------
@@ -609,7 +609,7 @@
       modelRow.appendChild(modelLabel); modelRow.appendChild(modelInput); panel.appendChild(modelRow);
 
       const loadKeysArray = () => { try { const raw = localStorage.getItem(API_KEYS_KEY) || '[]'; const arr = JSON.parse(raw); return Array.isArray(arr) ? arr : []; } catch (e) { return []; } };
-      const saveKeysArray = (arr) => { try { localStorage.setItem(API_KEYS_KEY, JSON.stringify(arr.map(k => String(k || '')))); } catch (e) {} };
+      const saveKeysArray = (arr) => { try { localStorage.setItem(API_KEYS_KEY, JSON.stringify(arr.map(k => String(k || '')))); } catch (e) { } };
 
       const buildApiKeyRows = (count) => {
         if (!Number.isFinite(count) || count < 1) count = 1; if (count > 10) count = 10;
@@ -626,7 +626,7 @@
           inp.addEventListener('change', () => { keys[i] = inp.value || ''; saveKeysArray(keys); });
           row.appendChild(lbl); row.appendChild(inp); row.appendChild(reset); apiKeysContainer.appendChild(row);
         }
-        try { localStorage.setItem(API_COUNT_KEY, String(count)); } catch (e) {}
+        try { localStorage.setItem(API_COUNT_KEY, String(count)); } catch (e) { }
         saveKeysArray(keys);
       };
 
@@ -681,7 +681,7 @@
           .answerLauncher.show { opacity: 1; visibility: visible; transform: translateY(-50%) scale(1); }
         `);
 
-        if (typeof Draggabilly !== 'undefined') { try { new Draggabilly(launcher, { handle: '.drag-handle', delay: 50 }); } catch (e) {} }
+        if (typeof Draggabilly !== 'undefined') { try { new Draggabilly(launcher, { handle: '.drag-handle', delay: 50 }); } catch (e) { } }
 
         const answerDragHandle = answerContainer.querySelector('.answer-drag-handle');
         if (answerDragHandle) {
@@ -701,14 +701,14 @@
 
         if (closeButton) {
           closeButton.addEventListener('click', () => {
-            try { if (window.__AssessmentHelperInstance && typeof window.__AssessmentHelperInstance.stopProcessImmediate === 'function') { try { window.__AssessmentHelperInstance.stopProcessImmediate(); } catch (e) {} } } catch (e) {}
+            try { if (window.__AssessmentHelperInstance && typeof window.__AssessmentHelperInstance.stopProcessImmediate === 'function') { try { window.__AssessmentHelperInstance.stopProcessImmediate(); } catch (e) { } } } catch (e) { }
             launcher.style.opacity = 0;
             launcher.addEventListener('transitionend', function handler() {
               try {
                 const launcherEl = document.getElementById('Launcher'); if (launcherEl && launcherEl.parentElement) launcherEl.parentElement.remove();
                 const answerEl = document.getElementById('answerContainer'); if (answerEl && answerEl.parentElement) answerEl.parentElement.remove();
-                try { window.__AssessmentHelperInstance = null; } catch (e) {}
-              } catch (e) {}
+                try { window.__AssessmentHelperInstance = null; } catch (e) { }
+              } catch (e) { }
               launcher.removeEventListener('transitionend', handler);
             }, { once: true });
           });
@@ -727,14 +727,14 @@
           closeAnswerButton.addEventListener('mouseup', () => (closeAnswerButton.style.transform = 'scale(1)'));
         }
 
-        getAnswerButton.addEventListener('mouseenter', async () => { try { await this.handleHoverEnter(); } catch (e) {} getAnswerButton.style.background = '#1f1f1f'; });
-        getAnswerButton.addEventListener('mouseleave', async () => { try { await this.handleHoverLeave(); } catch (e) {} getAnswerButton.style.background = '#151515'; });
+        getAnswerButton.addEventListener('mouseenter', async () => { try { await this.handleHoverEnter(); } catch (e) { } getAnswerButton.style.background = '#1f1f1f'; });
+        getAnswerButton.addEventListener('mouseleave', async () => { try { await this.handleHoverLeave(); } catch (e) { } getAnswerButton.style.background = '#151515'; });
         getAnswerButton.addEventListener('mousedown', () => (getAnswerButton.style.transform = 'scale(0.98)'));
         getAnswerButton.addEventListener('mouseup', () => (getAnswerButton.style.transform = 'scale(1)'));
 
         // Toggle start/stop (MC only)
         getAnswerButton.addEventListener('click', async () => {
-          if (!this.isRunning) { this.isRunning = true; await this.startProcessUI(); try { this.setEyeToFull(); } catch (e) {} this.runSolverLoop(); }
+          if (!this.isRunning) { this.isRunning = true; await this.startProcessUI(); try { this.setEyeToFull(); } catch (e) { } this.runSolverLoop(); }
           else { this.stopProcessImmediate(); await this.stopProcessUI(); }
         });
 
@@ -743,7 +743,7 @@
         const settingsBack = document.getElementById('settingsBack');
         if (settingsCog) settingsCog.addEventListener('click', (e) => { e.preventDefault(); this.openSettingsMenu(); });
         if (settingsBack) settingsBack.addEventListener('click', (e) => { e.preventDefault(); this.backFromSettings(); });
-      } catch (e) {}
+      } catch (e) { }
     }
 
     // -------- solver loop (MC only) --------
@@ -784,7 +784,7 @@
           const answerContentEl = answerContainerEl ? answerContainerEl.querySelector('#answerContent') : null;
           if (answerContainerEl) { answerContainerEl.style.display = 'flex'; answerContainerEl.style.visibility = 'visible'; answerContainerEl.classList.add('show'); }
 
-          if (normalized && ['A','B','C','D'].includes(normalized) && !excludedAnswers.includes(normalized)) {
+          if (normalized && ['A', 'B', 'C', 'D'].includes(normalized) && !excludedAnswers.includes(normalized)) {
             if (answerContentEl) answerContentEl.textContent = normalized;
 
             const options = document.querySelectorAll('[role=\"radio\"]');
@@ -792,7 +792,7 @@
 
             const pickIndex = normalized.charCodeAt(0) - 'A'.charCodeAt(0);
             const target = options[pickIndex];
-            if (target) { target.click(); try { target.dispatchEvent(new Event('change', { bubbles: true })); } catch (e) {} }
+            if (target) { target.click(); try { target.dispatchEvent(new Event('change', { bubbles: true })); } catch (e) { } }
             else { if (answerContentEl) answerContentEl.textContent = `Error: Option ${normalized} not found on page.`; return false; }
 
             const submitButton = Array.from(document.querySelectorAll('button')).find((b) => (b.textContent || '').trim().toLowerCase() === 'submit');
@@ -812,13 +812,27 @@
               }
 
               if (nextButton) {
+                const questionBefore = (document.querySelector('#question-text')?.textContent || '').trim();
                 nextButton.click();
                 await new Promise(r => setTimeout(r, 1500));
-                const newQuestionRadio = document.querySelector('[role=\"radio\"]');
-                const newSubmitButton = Array.from(document.querySelectorAll('button')).find((b) => (b.textContent || '').trim().toLowerCase() === 'submit');
-                if (newSubmitButton && newQuestionRadio) { if (!this.isRunning) return false; return true; }
-                if (answerContentEl) answerContentEl.textContent = 'No new question detected — stopping.'; return false;
+
+                // Wait up to 5 seconds for text to change
+                let questionAfter = questionBefore;
+                for (let i = 0; i < 10; i++) {
+                  await new Promise(r => setTimeout(r, 500));
+                  questionAfter = (document.querySelector('#question-text')?.textContent || '').trim();
+                  if (questionAfter && questionAfter !== questionBefore) break;
+                }
+
+                if (questionAfter && questionAfter !== questionBefore) {
+                  if (!this.isRunning) return false;
+                  return true;
+                }
+
+                if (answerContentEl) answerContentEl.textContent = 'No new question detected — stopping.';
+                return false;
               }
+
 
               if (answerContentEl) answerContentEl.textContent = 'Submit processed.'; return false;
             } else {
@@ -847,14 +861,14 @@
       } finally {
         this.isRunning = false;
         const spinnerEl = document.getElementById('ah-spinner'); if (spinnerEl) spinnerEl.style.display = 'none';
-        try { await this.playVideoOnce(this.getUrl('icons/gotosleep.webm')); } catch (e) {}
+        try { await this.playVideoOnce(this.getUrl('icons/gotosleep.webm')); } catch (e) { }
         this.setEyeToSleep();
-        try { console.log('[smArt] stopped'); } catch (e) {}
+        try { console.log('[smArt] stopped'); } catch (e) { }
         const label = document.getElementById('getAnswerButtonText'); if (label) label.textContent = 'work smArt-er';
         const btn = document.getElementById('getAnswerButton'); if (btn) btn.classList.remove('running');
       }
     }
   }
 
-  try { new AssessmentHelper(); } catch (e) {}
+  try { new AssessmentHelper(); } catch (e) { }
 })();
