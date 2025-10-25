@@ -752,12 +752,8 @@
         if (!this.isRunning) return false;
         try {
           let queryContent = await this.fetchArticleContent();
-
-          // Multiple-choice mode only: instruct model to return a single letter
           queryContent += "\n\nPROVIDE ONLY A ONE-LETTER ANSWER THAT'S IT NOTHING ELSE (A, B, C, or D).";
           if (excludedAnswers.length > 0) queryContent += `\n\nDo not pick letter ${excludedAnswers.join(', ')}.`;
-
-          try { console.groupCollapsed('[smArt] Sent (MC) payload'); console.log('q:', queryContent); console.log('article:', this.cachedArticle || null); console.groupEnd(); } catch (e) {}
 
           const randPct = this.getMCRandomPct();
           let willRandom = false; try { if (randPct > 0) willRandom = (Math.random() * 100) < randPct; } catch (e) { willRandom = false; }
@@ -765,7 +761,7 @@
           let answer = null;
           if (willRandom) {
             const letters = ['A', 'B', 'C', 'D'].filter(l => !excludedAnswers.includes(l));
-            const options = document.querySelectorAll('[role="radio"]');
+            const options = document.querySelectorAll('[role=\"radio\"]');
             let chosenLetter = null;
             if (options && options.length > 0) {
               const available = letters.map(l => l.charCodeAt(0) - 'A'.charCodeAt(0)).filter(i => options[i]);
@@ -773,10 +769,8 @@
               else { chosenLetter = letters[Math.floor(Math.random() * letters.length)]; }
             } else { chosenLetter = letters[Math.floor(Math.random() * letters.length)]; }
             answer = chosenLetter;
-            try { console.groupCollapsed('[smArt] Random MC decision'); console.log('Random decision triggered (pct):', randPct); console.log('Chosen letter:', chosenLetter); console.groupEnd(); } catch (e) {}
           } else {
             answer = await this.fetchAnswer(queryContent);
-            try { console.groupCollapsed('[smArt] Received (MC) answer'); console.log(answer); console.groupEnd(); } catch (e) {}
           }
 
           if (!this.isRunning) return false;
@@ -793,7 +787,7 @@
           if (normalized && ['A','B','C','D'].includes(normalized) && !excludedAnswers.includes(normalized)) {
             if (answerContentEl) answerContentEl.textContent = normalized;
 
-            const options = document.querySelectorAll('[role="radio"]');
+            const options = document.querySelectorAll('[role=\"radio\"]');
             if (!options || options.length === 0) { if (answerContentEl) answerContentEl.textContent = 'Error: No options found.'; return false; }
 
             const pickIndex = normalized.charCodeAt(0) - 'A'.charCodeAt(0);
@@ -801,35 +795,31 @@
             if (target) { target.click(); try { target.dispatchEvent(new Event('change', { bubbles: true })); } catch (e) {} }
             else { if (answerContentEl) answerContentEl.textContent = `Error: Option ${normalized} not found on page.`; return false; }
 
-            // Try to submit
             const submitButton = Array.from(document.querySelectorAll('button')).find((b) => (b.textContent || '').trim().toLowerCase() === 'submit');
             if (submitButton) {
               submitButton.click();
               await new Promise(r => setTimeout(r, 600));
 
-              // Look for next/continue or try again
+              // Updated looping logic
               const buttons = Array.from(document.querySelectorAll('button'));
-              const nextButton = buttons.find(b => /^(next|continue|ok|got it)$/i.test((b.textContent || '').trim())) || null;
+              const nextButton = buttons.find(b => /^(next|continue|ok|got it|submit)$/i.test((b.textContent || '').trim())) || null;
               const tryAgainButton = buttons.find(b => /try again/i.test((b.textContent || '').trim())) || null;
 
               if (tryAgainButton) {
-                // Previously chosen was wrong; exclude and retry once
                 await new Promise(r => setTimeout(r, 800));
                 if (!this.isRunning) return false;
-                return await attemptOnce([ ...excludedAnswers, normalized ]);
+                return await attemptOnce([...excludedAnswers, normalized]);
               }
 
               if (nextButton) {
                 nextButton.click();
-                await new Promise(r => setTimeout(r, 1200));
-                // Detect if a new MC question is present
-                const newQuestionRadio = document.querySelector('[role="radio"]');
+                await new Promise(r => setTimeout(r, 1500));
+                const newQuestionRadio = document.querySelector('[role=\"radio\"]');
                 const newSubmitButton = Array.from(document.querySelectorAll('button')).find((b) => (b.textContent || '').trim().toLowerCase() === 'submit');
                 if (newSubmitButton && newQuestionRadio) { if (!this.isRunning) return false; return true; }
-                if (answerContentEl) answerContentEl.textContent = 'Processing complete or no more MC questions found.'; return false;
+                if (answerContentEl) answerContentEl.textContent = 'No new question detected — stopping.'; return false;
               }
 
-              // No next/try again, stop
               if (answerContentEl) answerContentEl.textContent = 'Submit processed.'; return false;
             } else {
               if (answerContentEl) answerContentEl.textContent = 'Error: Submit button not found.'; return false;
