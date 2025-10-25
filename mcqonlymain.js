@@ -795,80 +795,68 @@
             if (target) { target.click(); try { target.dispatchEvent(new Event('change', { bubbles: true })); } catch (e) { } }
             else { if (answerContentEl) answerContentEl.textContent = `Error: Option ${normalized} not found on page.`; return false; }
 
-            const submitButton = Array.from(document.querySelectorAll('button')).find((b) => (b.textContent || '').trim().toLowerCase() === 'submit');
+            // Click Submit
+            const submitButton = document.querySelector('button[id*="_question"]') ||
+              document.evaluate('//*[@id="16892_question6"]/div[2]/div[2]/button', document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+
             if (submitButton) {
               submitButton.click();
-              await new Promise(r => setTimeout(r, 600));
+              await new Promise(r => setTimeout(r, 800));
 
-              // Updated looping logic
-              const buttons = Array.from(document.querySelectorAll('button'));
-              const nextButton = buttons.find(b => /^(next|continue|ok|got it|submit)$/i.test((b.textContent || '').trim())) || null;
-              const tryAgainButton = buttons.find(b => /try again/i.test((b.textContent || '').trim())) || null;
+              // Try Again or Next
+              const tryAgainButton = document.evaluate('//*[@id="feedbackActivityFormBtn"]', document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+              const nextButton = document.evaluate('//*[@id="feedbackActivityFormBtn"]', document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
 
-              if (tryAgainButton) {
-                await new Promise(r => setTimeout(r, 800));
+              if (tryAgainButton && /try again/i.test(tryAgainButton.textContent || '')) {
+                tryAgainButton.click();
+                await new Promise(r => setTimeout(r, 1500));
                 if (!this.isRunning) return false;
                 return await attemptOnce([...excludedAnswers, normalized]);
               }
 
-              if (nextButton) {
-                const questionBefore = (document.querySelector('#question-text')?.textContent || '').trim();
+              if (nextButton && !/try again/i.test(nextButton.textContent || '')) {
                 nextButton.click();
-                await new Promise(r => setTimeout(r, 1500));
+                await new Promise(r => setTimeout(r, 2000));
 
-                // Wait up to 5 seconds for text to change
-                let questionAfter = questionBefore;
-                for (let i = 0; i < 10; i++) {
-                  await new Promise(r => setTimeout(r, 500));
-                  questionAfter = (document.querySelector('#question-text')?.textContent || '').trim();
-                  if (questionAfter && questionAfter !== questionBefore) break;
-                }
-
-                if (questionAfter && questionAfter !== questionBefore) {
+                // Verify new question loaded
+                const newSubmitButton = document.evaluate('//*[@id="16892_question6"]/div[2]/div[2]/button', document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+                const newRadio = document.querySelector('[role="radio"]');
+                if (newSubmitButton && newRadio) {
                   if (!this.isRunning) return false;
-                  return true;
+                  return true; // continue loop
                 }
 
                 if (answerContentEl) answerContentEl.textContent = 'No new question detected — stopping.';
                 return false;
               }
 
-
-              if (answerContentEl) answerContentEl.textContent = 'Submit processed.'; return false;
+              if (answerContentEl) answerContentEl.textContent = 'Submit processed.';
+              return false;
             } else {
-              if (answerContentEl) answerContentEl.textContent = 'Error: Submit button not found.'; return false;
+              if (answerContentEl) answerContentEl.textContent = 'Error: Submit button not found.';
+              return false;
             }
-          } else {
-            if (answerContentEl) answerContentEl.textContent = `Model returned: ${answer || 'No valid single letter'}`; return false;
-          }
-        } catch (err) {
-          if (String(err && err.message || '').toLowerCase().includes('aborted') || (String(err) === 'Error: <<ABORTED>>')) return false;
-          const answerContainerEl = document.getElementById('answerContainer'); const answerContentEl = answerContainerEl ? answerContainerEl.querySelector('#answerContent') : null;
-          if (answerContentEl) answerContentEl.textContent = `Error: ${err && err.message ? err.message : String(err)}`;
-          if (answerContainerEl) { answerContainerEl.style.display = 'flex'; answerContainerEl.style.visibility = 'visible'; answerContainerEl.classList.add('show'); }
-          return false;
-        }
-      };
 
-      try {
-        while (this.isRunning) {
-          const cont = await attemptOnce();
-          if (!this.isRunning) break;
-          if (!cont) break;
-          const waitMs = Number(this.getMCWait()) || this.defaults.mc_wait;
-          await new Promise(r => setTimeout(r, waitMs));
+
+            try {
+              while (this.isRunning) {
+                const cont = await attemptOnce();
+                if (!this.isRunning) break;
+                if (!cont) break;
+                const waitMs = Number(this.getMCWait()) || this.defaults.mc_wait;
+                await new Promise(r => setTimeout(r, waitMs));
+              }
+            } finally {
+              this.isRunning = false;
+              const spinnerEl = document.getElementById('ah-spinner'); if (spinnerEl) spinnerEl.style.display = 'none';
+              try { await this.playVideoOnce(this.getUrl('icons/gotosleep.webm')); } catch (e) { }
+              this.setEyeToSleep();
+              try { console.log('[smArt] stopped'); } catch (e) { }
+              const label = document.getElementById('getAnswerButtonText'); if (label) label.textContent = 'work smArt-er';
+              const btn = document.getElementById('getAnswerButton'); if (btn) btn.classList.remove('running');
+            }
+          }
         }
-      } finally {
-        this.isRunning = false;
-        const spinnerEl = document.getElementById('ah-spinner'); if (spinnerEl) spinnerEl.style.display = 'none';
-        try { await this.playVideoOnce(this.getUrl('icons/gotosleep.webm')); } catch (e) { }
-        this.setEyeToSleep();
-        try { console.log('[smArt] stopped'); } catch (e) { }
-        const label = document.getElementById('getAnswerButtonText'); if (label) label.textContent = 'work smArt-er';
-        const btn = document.getElementById('getAnswerButton'); if (btn) btn.classList.remove('running');
-      }
-    }
-  }
 
   try { new AssessmentHelper(); } catch (e) { }
-})();
+      })();
