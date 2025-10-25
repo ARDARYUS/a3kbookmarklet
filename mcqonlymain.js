@@ -2,10 +2,10 @@
 // Removes: Ready/Reflect/Writing/Agree-Disagree logic + Cloudflare proxy.
 // Keeps: UI, animations, MC settings, Groq/OpenAI-compatible API w/ key rotation.
 (function () {
-  try { console.clear(); } catch (e) { }
+  try { console.clear(); } catch (e) {}
   console.log('[smArt] injected (MC-only)');
 
-  try { if (document.getElementById('Launcher')) { return; } } catch (e) { }
+  try { if (document.getElementById('Launcher')) { return; } } catch (e) {}
 
   class AssessmentHelper {
     constructor() {
@@ -49,6 +49,11 @@
         mc_random_pct: 0
       };
 
+      // -- YOUR SITE'S NAVIGATION XPATH (Next/Try again share same id) --
+      // You can change this one-liner if your professor swaps markup.
+      this.NEXT_TRY_XPATH = '//*[@id="feedbackActivityFormBtn"]';
+      this.NEXT_XP_KEY = 'ah_mc_next_or_try_xpath'; // optional override via settings
+
       // UI state for settings: 'closed' | 'menu' | 'mc' | 'ai'
       this.settingsState = 'closed';
       this._eyeOriginal = null; // for eye shrink/restore
@@ -61,7 +66,7 @@
     }
 
     // -------- utility: settings storage --------
-    saveSetting(key, value) { try { localStorage.setItem(key, String(value)); } catch (e) { } }
+    saveSetting(key, value) { try { localStorage.setItem(key, String(value)); } catch (e) {} }
     loadSetting(key, fallback) { try { const v = localStorage.getItem(key); return (v === null || v === undefined) ? fallback : v; } catch (e) { return fallback; } }
 
     // MC getters
@@ -112,11 +117,50 @@
       });
     }
 
+    // -------- visibility + XPath helpers (NEW) --------
+    isClickable(el) {
+      if (!el) return false;
+      const cs = getComputedStyle(el);
+      const rect = el.getBoundingClientRect();
+      return el.offsetParent !== null &&
+             cs.visibility !== 'hidden' &&
+             cs.display !== 'none' &&
+             rect.width > 0 && rect.height > 0 &&
+             !el.disabled;
+    }
+
+    _byXPathOnce(xp, root = document) {
+      try {
+        const r = document.evaluate(xp, root, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+        return r.singleNodeValue || null;
+      } catch { return null; }
+    }
+
+    async waitForVisibleXPath(xp, { timeout = 5000, interval = 120 } = {}) {
+      const t0 = performance.now();
+      while (performance.now() - t0 < timeout) {
+        const el = this._byXPathOnce(xp);
+        if (this.isClickable(el)) return el;
+        await new Promise(r => setTimeout(r, interval));
+      }
+      return null;
+    }
+
+    clickHard(el) {
+      try { el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' }); } catch {}
+      try { el.focus({ preventScroll: true }); } catch {}
+      try {
+        const ev = new MouseEvent('click', { bubbles: true, cancelable: true, view: window });
+        el.dispatchEvent(ev);
+      } catch {}
+      try { el.click(); } catch {}
+    }
+
     // -------- init / UI creation --------
     async init() {
       try {
-        await Promise.resolve(this.loadScript(this.animeScriptUrl)).catch(() => { });
-        await Promise.resolve(this.loadScript(this.draggabillyScriptUrl)).catch(() => { });
+        await Promise.resolve(this.loadScript(this.animeScriptUrl)).catch(() => {});
+        await Promise.resolve(this.loadScript(this.draggabillyScriptUrl)).catch(() => {});
 
         this.itemMetadata = { UI: this.createUI(), answerUI: this.createAnswerUI() };
         this.playIntroAnimation();
@@ -124,7 +168,7 @@
         try {
           this.itemMetadata = { UI: this.createUI(), answerUI: this.createAnswerUI() };
           this.showUI(true);
-        } catch (e) { }
+        } catch (e) {}
       }
     }
 
@@ -198,7 +242,7 @@
         @keyframes ah-spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         #getAnswerButton.running { background: #1e1e1e; box-shadow: 0 4px 12px rgba(0,0,0,0.35); }
         #getAnswerButton.running span { font-size:12px; opacity:0.95; }
-        #settingsPanel input[type="number"] { width:80px; padding:4px; border-radius:6px; border:1px solid rgba(255,255,255,0.08); background:transparent; color:white; }
+        #settingsPanel input[type="number"], #settingsPanel input[type="text"] { width:80%; padding:6px; border-radius:6px; border:1px solid rgba(255,255,255,0.08); background:transparent; color:white; }
         #settingsPanel label { font-size:13px; margin-right:6px; }
         .ah-reset { cursor:pointer; margin-left:8px; opacity:0.8; font-size:14px; user-select:none; }
         .ah-section-title { font-weight:700; margin-top:4px; margin-bottom:6px; font-size:14px; }
@@ -217,7 +261,7 @@
       const answerContainer = this.createEl('div', {
         id: 'answerContainer',
         className: 'answerLauncher',
-        style: "outline:none;min-height:60px;transform:translateX(0px) translateY(-50%);opacity:0;visibility:hidden;transition:opacity 0.3s ease, transform 0.3s ease;font-family:'Nunito',sans-serif;width:60px;height:60px;background:#1c1e2b;position:fixed;border-radius:8px;display:flex;justify-content:center;align-items:center;color:white;font-size:24px;top:50%;right:220px;z-index:99998;padding:8px;box-shadow:0 4px 8px rgba(0,0,0,0.2);overflow:hidden;white-space:normal;"
+        style: "outline:none;min-height:60px;transform:translateX(0px) translateY(-50%);opacity:0;visibility:hidden;transition:opacity 0.3s ease, transform 0.3s ease;font-family:'Nunito',sans-serif;width:60px;height:60px;background:#1c1e2b;position:fixed;border-radius:8px;display:flex;justify-content:center;align-items:center;color:white;font-size:24px;font-weight:bold;top:50%;right:220px;z-index:99998;padding:8px;box-shadow:0 4px 8px rgba(0,0,0,0.2);overflow:hidden;white-space:normal;"
       });
 
       const dragHandle = this.createEl('div', { className: 'answer-drag-handle', style: 'width:100%;height:24px;cursor:move;background:transparent;position:absolute;top:0;' });
@@ -242,7 +286,7 @@
       });
       document.body.appendChild(introImgElement);
 
-      anime.timeline({ easing: 'easeInOutQuad', duration: 800, complete: () => { try { introImgElement.remove(); } catch (e) { } this.showUI(); } })
+      anime.timeline({ easing: 'easeInOutQuad', duration: 800, complete: () => { try { introImgElement.remove(); } catch (e) {} this.showUI(); } })
         .add({ targets: introImgElement, opacity: [0, 1], scale: [0.5, 1], rotate: '1turn', duration: 1000, easing: 'easeOutExpo' })
         .add({ targets: introImgElement, translateY: '-=20', duration: 500, easing: 'easeInOutSine' })
         .add({ targets: introImgElement, translateY: '+=20', duration: 500, easing: 'easeInOutSine' })
@@ -250,7 +294,7 @@
     }
 
     showUI(skipAnimation = false) {
-      try { document.body.appendChild(this.itemMetadata.UI); document.body.appendChild(this.itemMetadata.answerUI); } catch (e) { }
+      try { document.body.appendChild(this.itemMetadata.UI); document.body.appendChild(this.itemMetadata.answerUI); } catch (e) {}
       const launcher = document.getElementById('Launcher');
       if (!launcher) { this.setupEventListeners(); return; }
       if (skipAnimation) {
@@ -296,7 +340,7 @@
     async fetchAnswer(queryContent, retryCount = 0) {
       const MAX_RETRIES = 3, RETRY_DELAY_MS = 1000;
       try {
-        if (this.currentAbortController) { try { this.currentAbortController.abort(); } catch (e) { } }
+        if (this.currentAbortController) { try { this.currentAbortController.abort(); } catch (e) {} }
         this.currentAbortController = new AbortController();
         const signal = this.currentAbortController.signal;
 
@@ -398,7 +442,7 @@
         img.src = this.getUrl('icons/sleep.gif');
         this.eyeState = 'sleep';
         img.style.opacity = '1';
-      } catch (err) { }
+      } catch (err) {}
     }
 
     setEyeToFull() {
@@ -411,7 +455,7 @@
         video.style.display = 'none';
         img.style.display = 'block';
         img.src = this.getUrl('icons/full.gif') + '?r=' + Date.now();
-      } catch (err) { }
+      } catch (err) {}
     }
 
     async handleHoverEnter() {
@@ -426,7 +470,7 @@
         img.style.display = 'block';
         img.src = this.getUrl('icons/idle.gif') + '?r=' + Date.now();
         this.eyeState = 'idle';
-      } catch (err) { }
+      } catch (err) {}
     }
 
     async handleHoverLeave() {
@@ -435,7 +479,7 @@
         await this.playVideoOnce(this.getUrl('icons/gotosleep.webm'));
         if (this.eyeState === 'full') return;
         this.setEyeToSleep();
-      } catch (err) { }
+      } catch (err) {}
     }
 
     playVideoOnce(src) {
@@ -468,12 +512,12 @@
         const video = document.getElementById('helperEyeVideo');
         const img = document.getElementById('helperEyeImg');
         if (!video || !img) return;
-        try { if (!video.paused) video.pause(); } catch (e) { }
-        try { video.removeAttribute('src'); video.load(); } catch (e) { }
+        try { if (!video.paused) video.pause(); } catch (e) {}
+        try { video.removeAttribute('src'); video.load(); } catch (e) {}
         video.style.display = 'none';
         img.style.display = 'block';
         this.currentVideo = null;
-      } catch (err) { }
+      } catch (err) {}
     }
 
     // -------- UI start/stop --------
@@ -484,7 +528,7 @@
       if (btn) btn.classList.add('running');
       if (spinner) spinner.style.display = 'block';
       if (label) label.textContent = 'stop.';
-      try { console.log('[AssessmentHelper] started'); } catch (e) { }
+      try { console.log('[AssessmentHelper] started'); } catch (e) {}
     }
 
     async stopProcessUI() {
@@ -494,14 +538,14 @@
       if (btn) btn.classList.remove('running');
       if (spinner) spinner.style.display = 'none';
       if (label) label.textContent = 'work smArt-er';
-      try { console.log('[AssessmentHelper] stopped'); } catch (e) { }
-      try { await this.playVideoOnce(this.getUrl('icons/gotosleep.webm')); } catch (e) { }
+      try { console.log('[AssessmentHelper] stopped'); } catch (e) {}
+      try { await this.playVideoOnce(this.getUrl('icons/gotosleep.webm')); } catch (e) {}
       this.setEyeToSleep();
     }
 
     stopProcessImmediate() {
       this.isRunning = false;
-      if (this.currentAbortController) { try { this.currentAbortController.abort(); } catch (e) { } this.currentAbortController = null; }
+      if (this.currentAbortController) { try { this.currentAbortController.abort(); } catch (e) {} this.currentAbortController = null; }
     }
 
     // -------- Settings UI (MC + AI only) --------
@@ -574,7 +618,22 @@
       probInput.addEventListener('change', () => { let v = Number(probInput.value); if (!Number.isFinite(v) || v < 0) v = 0; if (v > 100) v = 100; this.saveSetting(this.settingsKeys.mc_random_pct, v); probInput.value = String(v); });
       probRow.appendChild(probLabel); probRow.appendChild(probInput); probRow.appendChild(probReset); panel.appendChild(probRow);
 
-      const note = this.createEl('div', { text: 'Tip: set random % > 0 for occasional wrong answers to mimic real users.', style: 'font-size:12px;opacity:0.8;margin-top:8px;' });
+      // --- NEW: Custom XPath field (optional override) ---
+      const nextRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;width:100%;' });
+      const nextLabel = this.createEl('label', { text: 'Next/TryAgain XPath:', style: 'min-width:160px;' });
+      const nextInput = this.createEl('input', {
+        type: 'text',
+        id: 'mcNextTryXPath',
+        value: localStorage.getItem(this.NEXT_XP_KEY) || this.NEXT_TRY_XPATH,
+        placeholder: this.NEXT_TRY_XPATH
+      });
+      const nextClear = this.createEl('span', { className: 'ah-reset', text: '↺', title: 'Reset to default' });
+      nextClear.addEventListener('click', () => { nextInput.value = this.NEXT_TRY_XPATH; try { localStorage.removeItem(this.NEXT_XP_KEY); } catch {} });
+      nextInput.addEventListener('change', () => { try { localStorage.setItem(this.NEXT_XP_KEY, (nextInput.value || '').trim()); } catch {} });
+      nextRow.appendChild(nextLabel); nextRow.appendChild(nextInput); nextRow.appendChild(nextClear);
+      panel.appendChild(nextRow);
+
+      const note = this.createEl('div', { text: 'Set if your prof changes markup. Default uses //*[@id="feedbackActivityFormBtn"].', style: 'font-size:12px;opacity:0.8;margin-top:8px;' });
       panel.appendChild(note);
     }
 
@@ -609,7 +668,7 @@
       modelRow.appendChild(modelLabel); modelRow.appendChild(modelInput); panel.appendChild(modelRow);
 
       const loadKeysArray = () => { try { const raw = localStorage.getItem(API_KEYS_KEY) || '[]'; const arr = JSON.parse(raw); return Array.isArray(arr) ? arr : []; } catch (e) { return []; } };
-      const saveKeysArray = (arr) => { try { localStorage.setItem(API_KEYS_KEY, JSON.stringify(arr.map(k => String(k || '')))); } catch (e) { } };
+      const saveKeysArray = (arr) => { try { localStorage.setItem(API_KEYS_KEY, JSON.stringify(arr.map(k => String(k || '')))); } catch (e) {} };
 
       const buildApiKeyRows = (count) => {
         if (!Number.isFinite(count) || count < 1) count = 1; if (count > 10) count = 10;
@@ -626,7 +685,7 @@
           inp.addEventListener('change', () => { keys[i] = inp.value || ''; saveKeysArray(keys); });
           row.appendChild(lbl); row.appendChild(inp); row.appendChild(reset); apiKeysContainer.appendChild(row);
         }
-        try { localStorage.setItem(API_COUNT_KEY, String(count)); } catch (e) { }
+        try { localStorage.setItem(API_COUNT_KEY, String(count)); } catch (e) {}
         saveKeysArray(keys);
       };
 
@@ -681,7 +740,7 @@
           .answerLauncher.show { opacity: 1; visibility: visible; transform: translateY(-50%) scale(1); }
         `);
 
-        if (typeof Draggabilly !== 'undefined') { try { new Draggabilly(launcher, { handle: '.drag-handle', delay: 50 }); } catch (e) { } }
+        if (typeof Draggabilly !== 'undefined') { try { new Draggabilly(launcher, { handle: '.drag-handle', delay: 50 }); } catch (e) {} }
 
         const answerDragHandle = answerContainer.querySelector('.answer-drag-handle');
         if (answerDragHandle) {
@@ -701,14 +760,14 @@
 
         if (closeButton) {
           closeButton.addEventListener('click', () => {
-            try { if (window.__AssessmentHelperInstance && typeof window.__AssessmentHelperInstance.stopProcessImmediate === 'function') { try { window.__AssessmentHelperInstance.stopProcessImmediate(); } catch (e) { } } } catch (e) { }
+            try { if (window.__AssessmentHelperInstance && typeof window.__AssessmentHelperInstance.stopProcessImmediate === 'function') { try { window.__AssessmentHelperInstance.stopProcessImmediate(); } catch (e) {} } } catch (e) {}
             launcher.style.opacity = 0;
             launcher.addEventListener('transitionend', function handler() {
               try {
                 const launcherEl = document.getElementById('Launcher'); if (launcherEl && launcherEl.parentElement) launcherEl.parentElement.remove();
                 const answerEl = document.getElementById('answerContainer'); if (answerEl && answerEl.parentElement) answerEl.parentElement.remove();
-                try { window.__AssessmentHelperInstance = null; } catch (e) { }
-              } catch (e) { }
+                try { window.__AssessmentHelperInstance = null; } catch (e) {}
+              } catch (e) {}
               launcher.removeEventListener('transitionend', handler);
             }, { once: true });
           });
@@ -727,14 +786,14 @@
           closeAnswerButton.addEventListener('mouseup', () => (closeAnswerButton.style.transform = 'scale(1)'));
         }
 
-        getAnswerButton.addEventListener('mouseenter', async () => { try { await this.handleHoverEnter(); } catch (e) { } getAnswerButton.style.background = '#1f1f1f'; });
-        getAnswerButton.addEventListener('mouseleave', async () => { try { await this.handleHoverLeave(); } catch (e) { } getAnswerButton.style.background = '#151515'; });
+        getAnswerButton.addEventListener('mouseenter', async () => { try { await this.handleHoverEnter(); } catch (e) {} getAnswerButton.style.background = '#1f1f1f'; });
+        getAnswerButton.addEventListener('mouseleave', async () => { try { await this.handleHoverLeave(); } catch (e) {} getAnswerButton.style.background = '#151515'; });
         getAnswerButton.addEventListener('mousedown', () => (getAnswerButton.style.transform = 'scale(0.98)'));
         getAnswerButton.addEventListener('mouseup', () => (getAnswerButton.style.transform = 'scale(1)'));
 
         // Toggle start/stop (MC only)
         getAnswerButton.addEventListener('click', async () => {
-          if (!this.isRunning) { this.isRunning = true; await this.startProcessUI(); try { this.setEyeToFull(); } catch (e) { } this.runSolverLoop(); }
+          if (!this.isRunning) { this.isRunning = true; await this.startProcessUI(); try { this.setEyeToFull(); } catch (e) {} this.runSolverLoop(); }
           else { this.stopProcessImmediate(); await this.stopProcessUI(); }
         });
 
@@ -743,7 +802,7 @@
         const settingsBack = document.getElementById('settingsBack');
         if (settingsCog) settingsCog.addEventListener('click', (e) => { e.preventDefault(); this.openSettingsMenu(); });
         if (settingsBack) settingsBack.addEventListener('click', (e) => { e.preventDefault(); this.backFromSettings(); });
-      } catch (e) { }
+      } catch (e) {}
     }
 
     // -------- solver loop (MC only) --------
@@ -752,8 +811,12 @@
         if (!this.isRunning) return false;
         try {
           let queryContent = await this.fetchArticleContent();
+
+          // Multiple-choice mode only: instruct model to return a single letter
           queryContent += "\n\nPROVIDE ONLY A ONE-LETTER ANSWER THAT'S IT NOTHING ELSE (A, B, C, or D).";
           if (excludedAnswers.length > 0) queryContent += `\n\nDo not pick letter ${excludedAnswers.join(', ')}.`;
+
+          try { console.groupCollapsed('[smArt] Sent (MC) payload'); console.log('q:', queryContent); console.log('article:', this.cachedArticle || null); console.groupEnd(); } catch (e) {}
 
           const randPct = this.getMCRandomPct();
           let willRandom = false; try { if (randPct > 0) willRandom = (Math.random() * 100) < randPct; } catch (e) { willRandom = false; }
@@ -761,7 +824,7 @@
           let answer = null;
           if (willRandom) {
             const letters = ['A', 'B', 'C', 'D'].filter(l => !excludedAnswers.includes(l));
-            const options = document.querySelectorAll('[role=\"radio\"]');
+            const options = document.querySelectorAll('[role="radio"]');
             let chosenLetter = null;
             if (options && options.length > 0) {
               const available = letters.map(l => l.charCodeAt(0) - 'A'.charCodeAt(0)).filter(i => options[i]);
@@ -769,8 +832,10 @@
               else { chosenLetter = letters[Math.floor(Math.random() * letters.length)]; }
             } else { chosenLetter = letters[Math.floor(Math.random() * letters.length)]; }
             answer = chosenLetter;
+            try { console.groupCollapsed('[smArt] Random MC decision'); console.log('Random decision triggered (pct):', randPct); console.log('Chosen letter:', chosenLetter); console.groupEnd(); } catch (e) {}
           } else {
             answer = await this.fetchAnswer(queryContent);
+            try { console.groupCollapsed('[smArt] Received (MC) answer'); console.log(answer); console.groupEnd(); } catch (e) {}
           }
 
           if (!this.isRunning) return false;
@@ -784,79 +849,97 @@
           const answerContentEl = answerContainerEl ? answerContainerEl.querySelector('#answerContent') : null;
           if (answerContainerEl) { answerContainerEl.style.display = 'flex'; answerContainerEl.style.visibility = 'visible'; answerContainerEl.classList.add('show'); }
 
-          if (normalized && ['A', 'B', 'C', 'D'].includes(normalized) && !excludedAnswers.includes(normalized)) {
+          if (normalized && ['A','B','C','D'].includes(normalized) && !excludedAnswers.includes(normalized)) {
             if (answerContentEl) answerContentEl.textContent = normalized;
 
-            const options = document.querySelectorAll('[role=\"radio\"]');
+            const options = document.querySelectorAll('[role="radio"]');
             if (!options || options.length === 0) { if (answerContentEl) answerContentEl.textContent = 'Error: No options found.'; return false; }
 
             const pickIndex = normalized.charCodeAt(0) - 'A'.charCodeAt(0);
             const target = options[pickIndex];
-            if (target) { target.click(); try { target.dispatchEvent(new Event('change', { bubbles: true })); } catch (e) { } }
+            if (target) { target.click(); try { target.dispatchEvent(new Event('change', { bubbles: true })); } catch (e) {} }
             else { if (answerContentEl) answerContentEl.textContent = `Error: Option ${normalized} not found on page.`; return false; }
 
-            // Click Submit
-            const submitButton = document.querySelector('button[id*="_question"]') ||
-              document.evaluate('//*[@id="16892_question6"]/div[2]/div[2]/button', document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-
+            // Try to submit
+            const submitButton = Array.from(document.querySelectorAll('button')).find((b) => (b.textContent || '').trim().toLowerCase() === 'submit');
             if (submitButton) {
               submitButton.click();
-              await new Promise(r => setTimeout(r, 800));
+              await new Promise(r => setTimeout(r, 600));
 
-              // Try Again or Next
-              const tryAgainButton = document.evaluate('//*[@id="feedbackActivityFormBtn"]', document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-              const nextButton = document.evaluate('//*[@id="feedbackActivityFormBtn"]', document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+              // === Step 3 (UPDATED): Use XPath to click "Next question" OR "Try again"
+              const customXp = (localStorage.getItem(this.NEXT_XP_KEY) || '').trim();
+              const xpToUse = customXp || this.NEXT_TRY_XPATH;
 
-              if (tryAgainButton && /try again/i.test(tryAgainButton.textContent || '')) {
-                tryAgainButton.click();
-                await new Promise(r => setTimeout(r, 1500));
-                if (!this.isRunning) return false;
-                return await attemptOnce([...excludedAnswers, normalized]);
+              // Wait for whichever of the two states is visible/clickable under the shared XPath
+              let navEl = await this.waitForVisibleXPath(xpToUse, { timeout: 5000, interval: 120 });
+
+              if (!navEl) {
+                // Fallback: generic text-based scan (robustness)
+                const buttons = Array.from(document.querySelectorAll('button'));
+                navEl = buttons.find(b =>
+                  /^(next|continue|ok|got it|try again)$/i.test((b.textContent || '').trim()) && this.isClickable(b)
+                ) || null;
               }
 
-              if (nextButton && !/try again/i.test(nextButton.textContent || '')) {
-                nextButton.click();
-                await new Promise(r => setTimeout(r, 2000));
+              if (navEl) {
+                this.clickHard(navEl);
+                await new Promise(r => setTimeout(r, 800));
 
-                // Verify new question loaded
-                const newSubmitButton = document.evaluate('//*[@id="16892_question6"]/div[2]/div[2]/button', document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-                const newRadio = document.querySelector('[role="radio"]');
-                if (newSubmitButton && newRadio) {
+                // Detect if a new MC question is present (radio options + submit)
+                const newQuestionRadio = document.querySelector('[role="radio"]');
+                const newSubmitButton = Array.from(document.querySelectorAll('button'))
+                  .find((b) => (b.textContent || '').trim().toLowerCase() === 'submit');
+
+                if (newQuestionRadio && newSubmitButton) {
+                  // We’re on next question OR try-again refreshed the current one → continue
                   if (!this.isRunning) return false;
-                  return true; // continue loop
+                  return true;
                 }
 
-                if (answerContentEl) answerContentEl.textContent = 'No new question detected — stopping.';
+                // If DOM hasn’t updated yet, give it a beat and loop
+                await new Promise(r => setTimeout(r, 500));
+                if (!this.isRunning) return false;
+                return true;
+              } else {
+                if (answerContentEl) answerContentEl.textContent = 'Couldn’t find Next/Try Again (check XPath).';
                 return false;
               }
-
-              if (answerContentEl) answerContentEl.textContent = 'Submit processed.';
-              return false;
             } else {
               if (answerContentEl) answerContentEl.textContent = 'Error: Submit button not found.';
               return false;
             }
-
-
-            try {
-              while (this.isRunning) {
-                const cont = await attemptOnce();
-                if (!this.isRunning) break;
-                if (!cont) break;
-                const waitMs = Number(this.getMCWait()) || this.defaults.mc_wait;
-                await new Promise(r => setTimeout(r, waitMs));
-              }
-            } finally {
-              this.isRunning = false;
-              const spinnerEl = document.getElementById('ah-spinner'); if (spinnerEl) spinnerEl.style.display = 'none';
-              try { await this.playVideoOnce(this.getUrl('icons/gotosleep.webm')); } catch (e) { }
-              this.setEyeToSleep();
-              try { console.log('[smArt] stopped'); } catch (e) { }
-              const label = document.getElementById('getAnswerButtonText'); if (label) label.textContent = 'work smArt-er';
-              const btn = document.getElementById('getAnswerButton'); if (btn) btn.classList.remove('running');
-            }
+          } else {
+            if (answerContentEl) answerContentEl.textContent = `Model returned: ${answer || 'No valid single letter'}`;
+            return false;
           }
+        } catch (err) {
+          if (String(err && err.message || '').toLowerCase().includes('aborted') || (String(err) === 'Error: <<ABORTED>>')) return false;
+          const answerContainerEl = document.getElementById('answerContainer'); const answerContentEl = answerContainerEl ? answerContainerEl.querySelector('#answerContent') : null;
+          if (answerContentEl) answerContentEl.textContent = `Error: ${err && err.message ? err.message : String(err)}`;
+          if (answerContainerEl) { answerContainerEl.style.display = 'flex'; answerContainerEl.style.visibility = 'visible'; answerContainerEl.classList.add('show'); }
+          return false;
         }
+      };
 
-  try { new AssessmentHelper(); } catch (e) { }
-      })();
+      try {
+        while (this.isRunning) {
+          const cont = await attemptOnce();
+          if (!this.isRunning) break;
+          if (!cont) break;
+          const waitMs = Number(this.getMCWait()) || this.defaults.mc_wait;
+          await new Promise(r => setTimeout(r, waitMs));
+        }
+      } finally {
+        this.isRunning = false;
+        const spinnerEl = document.getElementById('ah-spinner'); if (spinnerEl) spinnerEl.style.display = 'none';
+        try { await this.playVideoOnce(this.getUrl('icons/gotosleep.webm')); } catch (e) {}
+        this.setEyeToSleep();
+        try { console.log('[smArt] stopped'); } catch (e) {}
+        const label = document.getElementById('getAnswerButtonText'); if (label) label.textContent = 'work smArt-er';
+        const btn = document.getElementById('getAnswerButton'); if (btn) btn.classList.remove('running');
+      }
+    }
+  }
+
+  try { new AssessmentHelper(); } catch (e) {}
+})();
