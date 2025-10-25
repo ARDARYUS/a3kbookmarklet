@@ -1,36 +1,44 @@
-// AssessmentHelper — MCQ-only Edition (GroqCloud, single API)
-// UI/DOM/eye/MCQ settings preserved; writing features & Cloudflare removed.
-// Drop-in replacement for the original bookmarklet script.
+
+// AssessmentHelper — MCQ-Only (GroqCloud, single API)
+// Full UI preserved: launcher, eye animations, draggable panels, settings (MCQ + Groq only).
+// Writing features, Cloudflare proxy, multi-key juggling removed.
+// Restored verbose console logs for debugging.
+// Save as: AssessmentHelper-MCQ.js
 (function () {
   try { console.clear(); } catch (e) {}
-  console.log('[smArt] injected (MCQ-only)');
+  console.log('[AssessmentHelper] injected: MCQ-only GroqCloud build');
 
-  try { if (document.getElementById('Launcher')) { return; } } catch (e) {}
+  // Prevent duplicate injection
+  if (document.getElementById('Launcher')) {
+    console.log('[AssessmentHelper] Launcher already present; aborting second inject.');
+    return;
+  }
 
   class AssessmentHelper {
     constructor() {
-      // global pointer
+      // public pointer for debugging
       window.__AssessmentHelperInstance = this;
 
-      // drag state for answer bubble
+      // UI/drag state
       this.answerIsDragging = false;
       this.answerInitialX = 0;
       this.answerInitialY = 0;
 
-      this.cachedArticle = null;
-      this.isFetchingAnswer = false;
       this.isRunning = false;
       this.currentAbortController = null;
 
+      // Eye state
       this.eyeState = 'sleep';
       this.currentVideo = null;
 
+      // External libs
       this.animeScriptUrl = 'https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js';
       this.draggabillyScriptUrl = 'https://unpkg.com/draggabilly@3/dist/draggabilly.pkgd.min.js';
 
+      // Assets
       this.assetBase = 'https://raw.githubusercontent.com/ARDARYUS/a3kbookmarklet/main/icons/';
 
-      // Settings keys & defaults — MCQ + Groq only
+      // Settings (MCQ + Groq-only)
       this.settingsKeys = {
         mc_wait: 'ah_mc_wait_ms',
         mc_random_pct: 'ah_mc_random_pct',
@@ -39,15 +47,15 @@
         ai_groq_model: 'ah_ai_groq_model'
       };
       this.defaults = {
-        mc_wait: 300,
+        mc_wait: 1000,
         mc_random_pct: 0,
         ai_groq_url: 'https://api.groq.com/openai/v1/chat/completions',
         ai_groq_model: 'llama-3.1-8b-instant'
       };
 
-      // UI state for settings: 'closed' | 'menu' | 'mc' | 'ai'
+      // Settings UI state
       this.settingsState = 'closed';
-      this._eyeOriginal = null; // store original eye style for restore
+      this._eyeOriginal = null;
 
       if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', () => this.init());
@@ -56,16 +64,30 @@
       }
     }
 
-    // -------- utility: settings storage --------
+    // ---------------- Utilities / Settings ----------------
+    log(msg, data) {
+      try { console.log(`[AssessmentHelper] ${msg}`, data ?? ''); } catch (e) {}
+    }
+    warn(msg, data) {
+      try { console.warn(`[AssessmentHelper] ${msg}`, data ?? ''); } catch (e) {}
+    }
+    error(msg, data) {
+      try { console.error(`[AssessmentHelper] ${msg}`, data ?? ''); } catch (e) {}
+    }
+
     saveSetting(key, value) { try { localStorage.setItem(key, String(value)); } catch (e) {} }
-    loadSetting(key, fallback) { try { const v = localStorage.getItem(key); return (v==null? fallback : v); } catch (e) { return fallback; } }
+    loadSetting(key, fallback) { try { const v = localStorage.getItem(key); return (v == null ? fallback : v); } catch (e) { return fallback; } }
 
     getMCWait() { return Number(localStorage.getItem(this.settingsKeys.mc_wait) || this.defaults.mc_wait); }
     getMCRandomPct() { return Number(localStorage.getItem(this.settingsKeys.mc_random_pct) || this.defaults.mc_random_pct); }
     resetMCWait() { this.saveSetting(this.settingsKeys.mc_wait, this.defaults.mc_wait); }
     resetMCRandom() { this.saveSetting(this.settingsKeys.mc_random_pct, this.defaults.mc_random_pct); }
 
-    // -------- resources & element helpers --------
+    getGroqUrl() { return this.loadSetting(this.settingsKeys.ai_groq_url, this.defaults.ai_groq_url); }
+    getGroqModel() { return this.loadSetting(this.settingsKeys.ai_groq_model, this.defaults.ai_groq_model); }
+    getGroqKey() { return this.loadSetting(this.settingsKeys.ai_groq_key, ''); }
+
+    // ---------------- DOM helpers ----------------
     getUrl(path) {
       if (!path) return '';
       if (/^https?:\/\//i.test(path)) return path;
@@ -107,14 +129,15 @@
       });
     }
 
-    // -------- init / UI creation --------
+    // ---------------- Init & UI ----------------
     async init() {
       try {
-        await Promise.resolve(this.loadScript(this.animeScriptUrl)).catch(() => {});
-        await Promise.resolve(this.loadScript(this.draggabillyScriptUrl)).catch(() => {});
+        await Promise.resolve(this.loadScript(this.animeScriptUrl)).catch(() => this.warn('anime.js failed to load'));
+        await Promise.resolve(this.loadScript(this.draggabillyScriptUrl)).catch(() => this.warn('draggabilly failed to load'));
         this.itemMetadata = { UI: this.createUI(), answerUI: this.createAnswerUI() };
         this.playIntroAnimation();
       } catch (err) {
+        this.error('init failed; falling back to direct showUI', err);
         try {
           this.itemMetadata = { UI: this.createUI(), answerUI: this.createAnswerUI() };
           this.showUI(true);
@@ -159,7 +182,11 @@
       eyeWrapper.appendChild(uiImg);
       eyeWrapper.appendChild(uiVideo);
 
-      const closeButton = this.createEl('button', { id: 'closeButton', text: '\u00D7', style: 'position:absolute;top:8px;right:8px;background:none;border:none;color:white;font-size:18px;cursor:pointer;padding:2px 8px;transition:color 0.12s ease, transform 0.1s ease;opacity:0.5;z-index:100005;' });
+      const closeButton = this.createEl('button', {
+        id: 'closeButton',
+        text: '\u00D7',
+        style: 'position:absolute;top:8px;right:8px;background:none;border:none;color:white;font-size:18px;cursor:pointer;padding:2px 8px;transition:color 0.12s ease, transform 0.1s ease;opacity:0.5;z-index:100005;'
+      });
 
       const getAnswerButton = this.createEl('button', {
         id: 'getAnswerButton',
@@ -172,7 +199,7 @@
       getAnswerButton.appendChild(spinner);
       getAnswerButton.appendChild(buttonTextSpan);
 
-      const version = this.createEl('div', { id: 'ah-version', style: 'position:absolute;bottom:8px;right:8px;font-size:12px;opacity:0.9;z-index:100005', text: '1.0' });
+      const version = this.createEl('div', { id: 'ah-version', style: 'position:absolute;bottom:8px;right:8px;font-size:12px;opacity:0.9;z-index:100005', text: 'MCQ' });
 
       const settingsCog = this.createEl('button', { id: 'settingsCog', title: 'Settings', innerHTML: '⚙', style: 'position:absolute;bottom:8px;left:8px;background:none;border:none;color:#cfcfcf;font-size:16px;cursor:pointer;opacity:0.85;padding:2px;transition:transform .12s;z-index:100005' });
       const settingsBack = this.createEl('button', { id: 'settingsBack', title: 'Back', innerHTML: '⟵', style: 'position:absolute;bottom:8px;left:8px;background:none;border:none;color:#ff4d4d;font-size:18px;cursor:pointer;opacity:0;display:none;padding:2px;transition:opacity .12s;z-index:100005' });
@@ -214,12 +241,12 @@
         id: 'answerContainer',
         className: 'answerLauncher',
         style:
-          "outline:none;min-height:60px;transform:translateX(0px) translateY(-50%);opacity:0;visibility:hidden;transition:opacity 0.3s ease, transform 0.3s ease;font-family:'Nunito',sans-serif;width:60px;height:60px;background:#1c1e2b;position:fixed;border-radius:8px;display:flex;justify-content:center;align-items:center;color:white;font-size:24px;top:50%;right:220px;z-index:99998;padding:8px;box-shadow:0 4px 8px rgba(0,0,0,0.2);overflow:hidden;white-space:normal;"
+          "outline:none;min-height:60px;transform:translateX(0px) translateY(-50%);opacity:0;visibility:hidden;transition:opacity 0.3s ease, transform 0.3s ease;font-family:'Nunito',sans-serif;width:120px;height:80px;background:#1c1e2b;position:fixed;border-radius:8px;display:flex;justify-content:center;align-items:center;color:white;font-size:28px;top:50%;right:220px;z-index:99998;padding:8px;box-shadow:0 4px 8px rgba(0,0,0,0.2);overflow:hidden;white-space:normal;"
       });
 
       const dragHandle = this.createEl('div', { className: 'answer-drag-handle', style: 'width:100%;height:24px;cursor:move;background:transparent;position:absolute;top:0;' });
       const closeButton = this.createEl('button', { id: 'closeAnswerButton', style: 'position:absolute;top:8px;right:8px;background:none;border:none;color:white;font-size:18px;cursor:pointer;padding:2px 8px;transition:color 0.2s ease, transform 0.1s ease;' });
-      const answerContent = this.createEl('div', { id: 'answerContent', style: 'padding:0;margin:0;word-wrap:break-word;font-size:24px;font-weight:bold;display:flex;justify-content:center;align-items:center;width:100%;height:100%;' });
+      const answerContent = this.createEl('div', { id: 'answerContent', style: 'padding:0;margin:0;word-wrap:break-word;font-size:28px;font-weight:bold;display:flex;justify-content:center;align-items:center;width:100%;height:100%;' });
 
       answerContainer.appendChild(dragHandle);
       answerContainer.appendChild(closeButton);
@@ -228,7 +255,6 @@
       return container;
     }
 
-    // -------- intro & show UI --------
     playIntroAnimation() {
       if (typeof anime === 'undefined') { this.showUI(); return; }
       const imageUrl = this.getUrl('icons/eyebackground.gif');
@@ -243,7 +269,7 @@
     }
 
     showUI(skipAnimation = false) {
-      try { document.body.appendChild(this.itemMetadata.UI); document.body.appendChild(this.itemMetadata.answerUI); } catch (e) {}
+      try { document.body.appendChild(this.itemMetadata.UI); document.body.appendChild(this.itemMetadata.answerUI); } catch (e) { this.error('showUI append failed', e); }
       const launcher = document.getElementById('Launcher');
       if (!launcher) { this.setupEventListeners(); return; }
       if (skipAnimation) {
@@ -257,7 +283,6 @@
       }
     }
 
-    // -------- helper: alerts --------
     showAlert(message, type = 'info') {
       const alertContainer = this.createEl('div', {
         style: `position:fixed;top:20px;left:50%;transform:translateX(-50%);background-color:${type === 'error' ? '#dc3545' : '#007bff'};color:white;padding:15px 25px;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.2);z-index:100000;opacity:0;transition:opacity 0.5s ease-in-out;font-family:'Nunito',sans-serif;font-size:16px;max-width:80%;text-align:center;`
@@ -265,10 +290,10 @@
       alertContainer.textContent = message;
       document.body.appendChild(alertContainer);
       setTimeout(() => (alertContainer.style.opacity = 1), 10);
-      setTimeout(() => { alertContainer.style.opacity = 0; alertContainer.addEventListener('transitionend', () => alertContainer.remove()); }, 3000);
+      setTimeout(() => { alertContainer.style.opacity = 0; alertContainer.addEventListener('transitionend', () => alertContainer.remove()); }, 2500);
     }
 
-    // -------- content grabber (MCQ only) --------
+    // ---------------- Content (MCQ only) ----------------
     async fetchArticleContent() {
       try {
         const articleContainer = document.querySelector('#start-reading');
@@ -277,40 +302,42 @@
           const paragraphs = articleContainer.querySelectorAll('p');
           articleContent = Array.from(paragraphs).map((p) => p.textContent.trim()).join(' ');
         }
-
-        const questionContainer = document.querySelector('#activity-component-react') || document.querySelector('#question-text');
+        const questionContainer = document.querySelector('#activity-component-react') || document.querySelector('#question-text') || document.querySelector('.question-text');
         const questionContent = questionContainer ? questionContainer.textContent.trim() : '';
 
-        const combinedContent = `${articleContent}\n\n${questionContent}`;
-        this.cachedArticle = combinedContent;
-        return combinedContent;
+        const combinedContent = `${articleContent}\n\n${questionContent}`.trim();
+        return combinedContent || questionContent || articleContent || '';
       } catch (err) {
+        this.warn('fetchArticleContent error', err);
         return '';
       }
     }
 
-    // -------- single-API (Groq) answer fetcher --------
+    // ---------------- Groq: single API call ----------------
     async fetchAnswer(queryContent, retryCount = 0) {
       const MAX_RETRIES = 2, RETRY_DELAY_MS = 1000;
       try {
-        if (this.currentAbortController) { try { this.currentAbortController.abort(); } catch (e) {} }
+        if (this.currentAbortController) {
+          try { this.currentAbortController.abort(); } catch (e) {}
+        }
         this.currentAbortController = new AbortController();
         const signal = this.currentAbortController.signal;
 
-        const groqUrl = this.loadSetting(this.settingsKeys.ai_groq_url, this.defaults.ai_groq_url);
-        const groqModel = this.loadSetting(this.settingsKeys.ai_groq_model, this.defaults.ai_groq_model);
-        const groqKey = this.loadSetting(this.settingsKeys.ai_groq_key, '');
-
-        if (!groqKey) throw new Error('Missing Groq API key in settings.');
+        const groqUrl = this.getGroqUrl();
+        const groqModel = this.getGroqModel();
+        const groqKey = this.getGroqKey();
+        if (!groqKey) throw new Error('Missing Groq API key (set it in Settings > AI Settings).');
 
         const payload = {
           model: groqModel,
           messages: [
-            { role: 'system', content: 'You answer multiple-choice questions. Reply with the best option letter and short justification.' },
-            { role: 'user', content: (queryContent || '') + (this.cachedArticle ? `\n\nArticle/Question Context:\n${this.cachedArticle}` : '') }
+            { role: 'system', content: 'You answer multiple-choice questions. Reply with ONLY a single capital letter: A, B, C, D, or E. No punctuation, no words.' },
+            { role: 'user', content: (queryContent || '') }
           ],
-          max_tokens: 256
+          max_tokens: 4,
+          temperature: 0
         };
+        this.log('fetchAnswer payload', payload);
 
         const response = await fetch(groqUrl, {
           method: 'POST',
@@ -328,6 +355,7 @@
         if (!response.ok) {
           const text = await response.text().catch(() => '');
           const isTransient = response.status === 429 || response.status >= 500;
+          this.warn(`API non-OK (${response.status})`, text);
           if (isTransient && retryCount < MAX_RETRIES) {
             await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
             return this.fetchAnswer(queryContent, retryCount + 1);
@@ -336,28 +364,29 @@
         }
 
         const data = await response.json().catch(() => null);
+        this.log('fetchAnswer raw response', data);
+        let content = '';
         if (data && Array.isArray(data.choices) && data.choices.length) {
           const c = data.choices[0];
-          if (c.message && (c.message.content || c.message.role)) {
-            return String(c.message.content || c.text || '').trim();
-          }
-          if (c.text) return String(c.text).trim();
-          if (c.delta && c.delta.content) return String(c.delta.content).trim();
-        }
+          if (c.message && (c.message.content || c.message.role)) content = String(c.message.content || '').trim();
+          else if (c.text) content = String(c.text).trim();
+          else if (c.delta && c.delta.content) content = String(c.delta.content).trim();
+        } else if (typeof data === 'string') content = data.trim();
+        else if (data && (data.output || data.answer || data.result)) content = String(data.output || data.answer || data.result).trim();
 
-        if (data && (data.output || data.answer || data.result)) {
-          return String(data.output || data.answer || data.result).trim();
-        }
-
-        if (typeof data === 'string') return data.trim();
-        return 'No answer available';
+        // Enforce single letter A–E
+        const letterMatch = (content || '').match(/[A-E]/i);
+        const letter = letterMatch ? letterMatch[0].toUpperCase() : '';
+        this.log('parsed letter', { content, letter });
+        return letter || '';
       } catch (err) {
         if (err && err.name === 'AbortError') return '<<ABORTED>>';
-        return `Error: ${err && err.message ? err.message : String(err)}`;
+        this.error('fetchAnswer error', err);
+        return '';
       }
     }
 
-    // -------- Eye helpers --------
+    // ---------------- Eye helpers ----------------
     setEyeToSleep() {
       if (this.eyeState === 'full') return;
       try {
@@ -467,7 +496,7 @@
       } catch (err) {}
     }
 
-    // -------- UI start/stop --------
+    // ---------------- Start/Stop UI ----------------
     async startProcessUI() {
       const btn = document.getElementById('getAnswerButton');
       const spinner = document.getElementById('ah-spinner');
@@ -475,7 +504,7 @@
       if (btn) btn.classList.add('running');
       if (spinner) spinner.style.display = 'block';
       if (label) label.textContent = 'stop.';
-      try { console.log('[AssessmentHelper] started'); } catch (e) {}
+      this.log('started');
     }
 
     async stopProcessUI() {
@@ -485,7 +514,7 @@
       if (btn) btn.classList.remove('running');
       if (spinner) spinner.style.display = 'none';
       if (label) label.textContent = 'work smArt-er';
-      try { console.log('[AssessmentHelper] stopped'); } catch (e) {}
+      this.log('stopped');
       try { await this.playVideoOnce(this.getUrl('icons/gotosleep.webm')); } catch (e) {}
       this.setEyeToSleep();
     }
@@ -498,7 +527,7 @@
       }
     }
 
-    // -------- Settings UI flows (menu/mc/ai) --------
+    // ---------------- Settings UI (menu/mc/ai) ----------------
     _computeExpandRight() {
       const launcher = document.getElementById('Launcher');
       if (!launcher) return true;
@@ -622,7 +651,8 @@
       probReset.addEventListener('click', () => { this.resetMCRandom(); probInput.value = String(this.getMCRandomPct()); });
       probInput.addEventListener('change', () => {
         let v = Number(probInput.value);
-        if (!Number.isFinite(v) || v < 0) v = 0; if (v > 100) v = 100;
+        if (!Number.isFinite(v) || v < 0) v = 0;
+        if (v > 100) v = 100;
         this.saveSetting(this.settingsKeys.mc_random_pct, v);
         probInput.value = String(v);
       });
@@ -647,7 +677,7 @@
       // URL
       const urlRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;width:100%;' });
       const urlLabel = this.createEl('label', { text: 'Groq URL:', style: 'min-width:160px;' });
-      const urlInput = this.createEl('input', { type: 'text', id: 'aiGroqUrlInput', value: this.loadSetting(this.settingsKeys.ai_groq_url, this.defaults.ai_groq_url), style: 'flex:1;padding:6px;border:1px solid #ccc;border-radius:4px;' });
+      const urlInput = this.createEl('input', { type: 'text', id: 'aiGroqUrlInput', value: this.getGroqUrl(), style: 'flex:1;padding:6px;border:1px solid #ccc;border-radius:4px;' });
       const urlReset = this.createEl('span', { className: 'ah-reset', text: '↺', title: 'Reset to default' });
       urlReset.addEventListener('click', () => { urlInput.value = this.defaults.ai_groq_url; this.saveSetting(this.settingsKeys.ai_groq_url, urlInput.value); });
       urlInput.addEventListener('change', () => this.saveSetting(this.settingsKeys.ai_groq_url, urlInput.value || ''));
@@ -657,7 +687,7 @@
       // Model
       const modelRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;width:100%;' });
       const modelLabel = this.createEl('label', { text: 'Model:', style: 'min-width:160px;' });
-      const modelInput = this.createEl('input', { type: 'text', id: 'aiGroqModelInput', value: this.loadSetting(this.settingsKeys.ai_groq_model, this.defaults.ai_groq_model), style: 'flex:1;padding:6px;border:1px solid #ccc;border-radius:4px;' });
+      const modelInput = this.createEl('input', { type: 'text', id: 'aiGroqModelInput', value: this.getGroqModel(), style: 'flex:1;padding:6px;border:1px solid #ccc;border-radius:4px;' });
       modelInput.addEventListener('change', () => this.saveSetting(this.settingsKeys.ai_groq_model, modelInput.value || this.defaults.ai_groq_model));
       modelRow.appendChild(modelLabel); modelRow.appendChild(modelInput);
       panel.appendChild(modelRow);
@@ -665,7 +695,7 @@
       // API Key
       const keyRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;width:100%;' });
       const keyLabel = this.createEl('label', { text: 'API key:', style: 'min-width:160px;' });
-      const keyInput = this.createEl('input', { type: 'text', id: 'aiGroqKeyInput', value: this.loadSetting(this.settingsKeys.ai_groq_key, ''), style: 'flex:1;padding:6px;border:1px solid #ccc;border-radius:4px;' });
+      const keyInput = this.createEl('input', { type: 'text', id: 'aiGroqKeyInput', value: this.getGroqKey(), style: 'flex:1;padding:6px;border:1px solid #ccc;border-radius:4px;' });
       const keyClear = this.createEl('span', { className: 'ah-reset', text: '↺', title: 'Clear' });
       keyClear.addEventListener('click', () => { keyInput.value = ''; this.saveSetting(this.settingsKeys.ai_groq_key, ''); });
       keyInput.addEventListener('change', () => this.saveSetting(this.settingsKeys.ai_groq_key, keyInput.value || ''));
@@ -700,7 +730,7 @@
       }
     }
 
-    // -------- Event wiring & behavior (MCQ only) --------
+    // ---------------- Event wiring ----------------
     setupEventListeners() {
       try {
         const launcher = document.getElementById('Launcher');
@@ -721,7 +751,10 @@
           .answerLauncher.show { opacity: 1; visibility: visible; transform: translateY(-50%) scale(1); }
         `);
 
-        if (typeof Draggabilly !== 'undefined') { try { new Draggabilly(launcher, { handle: '.drag-handle', delay: 50 }); } catch (e) {} }
+        if (typeof Draggabilly !== 'undefined') {
+          try { new Draggabilly(launcher, { handle: '.drag-handle', delay: 50 }); } catch (e) {}
+          try { new Draggabilly(answerContainer, { handle: '.answer-drag-handle', delay: 50 }); } catch (e) {}
+        }
 
         const answerDragHandle = answerContainer.querySelector('.answer-drag-handle');
         if (answerDragHandle) {
@@ -753,7 +786,11 @@
 
         if (closeButton) {
           closeButton.addEventListener('click', () => {
-            try { if (window.__AssessmentHelperInstance && typeof window.__AssessmentHelperInstance.stopProcessImmediate === 'function') { window.__AssessmentHelperInstance.stopProcessImmediate(); } } catch (e) {}
+            try {
+              if (window.__AssessmentHelperInstance && typeof window.__AssessmentHelperInstance.stopProcessImmediate === 'function') {
+                try { window.__AssessmentHelperInstance.stopProcessImmediate(); } catch (e) {}
+              }
+            } catch (e) {}
             launcher.style.opacity = 0;
             launcher.addEventListener('transitionend', function handler() {
               try {
@@ -805,15 +842,14 @@
           }
         });
 
-        // Settings cog/back wiring
         const settingsCog = document.getElementById('settingsCog');
         const settingsBack = document.getElementById('settingsBack');
         if (settingsCog) settingsCog.addEventListener('click', (e) => { e.preventDefault(); this.openSettingsMenu(); });
         if (settingsBack) settingsBack.addEventListener('click', (e) => { e.preventDefault(); this.backFromSettings(); });
-      } catch (err) { console.error(err); }
+      } catch (err) { this.error('setupEventListeners failed', err); }
     }
 
-    // -------- MCQ solver loop (no radio clicking; displays answer & goes next) --------
+    // ---------------- MCQ mechanics ----------------
     async runSolverLoop() {
       const answerContainer = document.getElementById('answerContainer');
       const answerContent = document.getElementById('answerContent');
@@ -823,36 +859,53 @@
         try {
           const waitMs = this.getMCWait();
           const randomPct = this.getMCRandomPct();
+          this.log('loop tick', { waitMs, randomPct });
 
           // 1) Gather context
           const context = await this.fetchArticleContent();
           if (!context) {
-            if (answerContent) answerContent.textContent = 'No context';
+            this.warn('No context found; skipping to next');
+            if (answerContent) answerContent.textContent = '?';
             await this._sleep(waitMs);
-            // try to go next anyway
             this._tryGoNext();
             continue;
           }
 
-          // 2) Randomize occasionally if configured
-          let resultText = '';
+          // 2) Compute answer
+          let resultLetter = '';
           if (randomPct > 0 && Math.random() * 100 < randomPct) {
             const letters = ['A','B','C','D','E'];
-            resultText = `Random: ${letters[Math.floor(Math.random()*letters.length)]}`;
+            resultLetter = letters[Math.floor(Math.random()*letters.length)];
+            this.log('randomized letter', resultLetter);
           } else {
-            resultText = await this.fetchAnswer(context);
+            const raw = await this.fetchAnswer(context);
+            resultLetter = (raw || '').trim().charAt(0).toUpperCase();
           }
 
-          // 3) Show answer in floating bubble
-          if (answerContent) {
-            answerContent.textContent = (resultText || '').slice(0, 300);
+          // Sanity: only A–E
+          if (!/^[A-E]$/.test(resultLetter)) {
+            this.warn('AI did not return A–E; showing raw and skipping click', resultLetter);
+            if (answerContent) answerContent.textContent = (resultLetter || '?');
+            await this._sleep(waitMs);
+            this._tryGoNext();
+            continue;
           }
 
-          // 4) Wait, then go to next question (no radio selection)
+          // 3) Show letter prominently
+          if (answerContent) answerContent.textContent = resultLetter;
+          this.log('final letter', resultLetter);
+
+          // 4) Try selecting the corresponding choice & submit
+          this._selectChoiceByLetter(resultLetter);
+          await this._sleep(300);
+          this._trySubmit();
+
+          // 5) Wait, then go next
           await this._sleep(waitMs);
           this._tryGoNext();
         } catch (err) {
-          if (answerContent) answerContent.textContent = 'Error';
+          this.error('loop error', err);
+          if (answerContent) answerContent.textContent = '!';
           await this._sleep(500);
         }
       }
@@ -860,18 +913,70 @@
       await this.stopProcessUI();
     }
 
-    _sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+    _selectChoiceByLetter(letter) {
+      // A=0, B=1, ...
+      const idx = letter.charCodeAt(0) - 65;
+      this.log('attempt select index', idx);
 
-    // Attempts to click a generic "Next"/continue control without touching radio inputs
+      // Strategy 1: radios by order
+      const radios = Array.from(document.querySelectorAll('input[type="radio"]')).filter(r => !r.disabled);
+      if (radios.length >= idx + 1) {
+        const r = radios[idx];
+        try {
+          // Prefer clicking label for better site compatibility
+          if (r.id) {
+            const lab = document.querySelector(`label[for="${CSS.escape(r.id)}"]`);
+            if (lab) { lab.click(); this.log('clicked label for radio', r.id); return true; }
+          }
+          r.click();
+          this.log('clicked radio', r);
+          return true;
+        } catch (e) {}
+      }
+
+      // Strategy 2: list items / options
+      const optionCandidates = Array.from(document.querySelectorAll('[role="radio"], [role="option"], li.choice, .option, .mcq-option, .answer, .choice'));
+      if (optionCandidates.length >= idx + 1) {
+        try { optionCandidates[idx].click(); this.log('clicked option candidate', optionCandidates[idx]); return true; } catch (e) {}
+      }
+
+      // Strategy 3: labels containing letter marker like "A)", "B."
+      const labelCandidates = Array.from(document.querySelectorAll('label')).filter(l => /^[A-E][).]\s*/i.test((l.textContent || '').trim()));
+      if (labelCandidates.length >= idx + 1) {
+        try { labelCandidates[idx].click(); this.log('clicked labeled option', labelCandidates[idx]); return true; } catch (e) {}
+      }
+
+      this.warn('failed to select choice by letter', letter);
+      return false;
+    }
+
+    _trySubmit() {
+      const submitSelectors = [
+        'button[type="submit"]',
+        'button.submit',
+        'button[aria-label="Submit"]',
+        'button:has(span:contains("Submit"))',
+        '#submit', '.submit-button',
+        'button.primary', 'button.next'
+      ];
+      for (const sel of submitSelectors) {
+        try {
+          const el = this._querySmart(sel);
+          if (el) { el.click(); this.log('clicked submit', sel); return true; }
+        } catch (e) {}
+      }
+      return false;
+    }
+
     _tryGoNext() {
       const selectors = [
         'button.next', 'button[aria-label="Next"]', 'button:has(span:contains("Next"))',
-        '#next', '.next-button', 'button[type=submit]', 'a.next', 'a[rel="next"]'
+        '#next', '.next-button', 'a.next', 'a[rel="next"]'
       ];
       for (const sel of selectors) {
         try {
           const el = this._querySmart(sel);
-          if (el) { el.click(); return true; }
+          if (el) { el.click(); this.log('clicked next', sel); return true; }
         } catch (e) {}
       }
       return false;
@@ -880,6 +985,8 @@
     _querySmart(selector) {
       try { return document.querySelector(selector); } catch (e) { return null; }
     }
+
+    _sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
   }
 
   // Instantiate
