@@ -1,10 +1,9 @@
 // AssessmentHelper — MC-ONLY version (GroqCloud only)
 // Removes: Ready/Reflect/Writing/Agree-Disagree logic + Cloudflare proxy.
-// Keeps: UI, animations, MC settings, Groq/OpenAI-compatible API w/ key rotation.
+// Keeps: UI, animations, MC settings, Groq/OpenAI-compatible API w/ key rotation + continuous loop.
 (function () {
   try { console.clear(); } catch (e) {}
-  console.log('[smArt] injected (MC-only)');
-
+  console.log('[smArt] injected (MC-only, GroqCloud)');
   try { if (document.getElementById('Launcher')) { return; } } catch (e) {}
 
   class AssessmentHelper {
@@ -38,9 +37,9 @@
         mc_wait: 'ah_mc_wait_ms',
         mc_random_pct: 'ah_mc_random_pct',
         // AI (GroqCloud only)
-        ai_use_api: 'ah_ai_use_api',
+        ai_use_api: 'ah_ai_use_api',       // retained for UI continuity; always true internally
         ai_groq_url: 'ah_ai_groq_url',
-        ai_groq_key: 'ah_ai_groq_key',
+        ai_groq_key: 'ah_ai_groq_key',     // legacy single key
         ai_groq_model: 'ah_ai_groq_model'
       };
 
@@ -746,7 +745,7 @@
       } catch (e) {}
     }
 
-    // -------- solver loop (MC only) --------
+    // -------- solver loop (MC only, continuous) --------
     async runSolverLoop() {
       const attemptOnce = async (excludedAnswers = []) => {
         if (!this.isRunning) return false;
@@ -756,8 +755,6 @@
           // Multiple-choice mode only: instruct model to return a single letter
           queryContent += "\n\nPROVIDE ONLY A ONE-LETTER ANSWER THAT'S IT NOTHING ELSE (A, B, C, or D).";
           if (excludedAnswers.length > 0) queryContent += `\n\nDo not pick letter ${excludedAnswers.join(', ')}.`;
-
-          try { console.groupCollapsed('[smArt] Sent (MC) payload'); console.log('q:', queryContent); console.log('article:', this.cachedArticle || null); console.groupEnd(); } catch (e) {}
 
           const randPct = this.getMCRandomPct();
           let willRandom = false; try { if (randPct > 0) willRandom = (Math.random() * 100) < randPct; } catch (e) { willRandom = false; }
@@ -773,10 +770,8 @@
               else { chosenLetter = letters[Math.floor(Math.random() * letters.length)]; }
             } else { chosenLetter = letters[Math.floor(Math.random() * letters.length)]; }
             answer = chosenLetter;
-            try { console.groupCollapsed('[smArt] Random MC decision'); console.log('Random decision triggered (pct):', randPct); console.log('Chosen letter:', chosenLetter); console.groupEnd(); } catch (e) {}
           } else {
             answer = await this.fetchAnswer(queryContent);
-            try { console.groupCollapsed('[smArt] Received (MC) answer'); console.log(answer); console.groupEnd(); } catch (e) {}
           }
 
           if (!this.isRunning) return false;
@@ -841,7 +836,7 @@
           if (String(err && err.message || '').toLowerCase().includes('aborted') || (String(err) === 'Error: <<ABORTED>>')) return false;
           const answerContainerEl = document.getElementById('answerContainer'); const answerContentEl = answerContainerEl ? answerContainerEl.querySelector('#answerContent') : null;
           if (answerContentEl) answerContentEl.textContent = `Error: ${err && err.message ? err.message : String(err)}`;
-          if (answerContainerEl) { answerContainerEl.style.display = 'flex'; answerContainerEl.style.visibility = 'visible'; answerContainerEl.classList.add('show'); }
+          const ac = document.getElementById('answerContainer'); if (ac) { ac.style.display = 'flex'; ac.style.visibility = 'visible'; ac.classList.add('show'); }
           return false;
         }
       };
