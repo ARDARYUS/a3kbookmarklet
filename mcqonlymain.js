@@ -622,22 +622,7 @@
       probInput.addEventListener('change', () => { let v = Number(probInput.value); if (!Number.isFinite(v) || v < 0) v = 0; if (v > 100) v = 100; this.saveSetting(this.settingsKeys.mc_random_pct, v); probInput.value = String(v); });
       probRow.appendChild(probLabel); probRow.appendChild(probInput); probRow.appendChild(probReset); panel.appendChild(probRow);
 
-      // --- NEW: Custom XPath field (optional override) ---
-      const nextRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;width:100%;' });
-      const nextLabel = this.createEl('label', { text: 'Next/TryAgain XPath:', style: 'min-width:160px;' });
-      const nextInput = this.createEl('input', {
-        type: 'text',
-        id: 'mcNextTryXPath',
-        value: localStorage.getItem(this.NEXT_XP_KEY) || this.NEXT_TRY_XPATH,
-        placeholder: this.NEXT_TRY_XPATH
-      });
-      const nextClear = this.createEl('span', { className: 'ah-reset', text: '↺', title: 'Reset to default' });
-      nextClear.addEventListener('click', () => { nextInput.value = this.NEXT_TRY_XPATH; try { localStorage.removeItem(this.NEXT_XP_KEY); } catch {} });
-      nextInput.addEventListener('change', () => { try { localStorage.setItem(this.NEXT_XP_KEY, (nextInput.value || '').trim()); } catch {} });
-      nextRow.appendChild(nextLabel); nextRow.appendChild(nextInput); nextRow.appendChild(nextClear);
-      panel.appendChild(nextRow);
-
-      const note = this.createEl('div', { text: 'Set if your prof changes markup. Default uses //*[@id="feedbackActivityFormBtn"].', style: 'font-size:12px;opacity:0.8;margin-top:8px;' });
+      // --- NEW: Custom XPath field (optional override) --
       panel.appendChild(note);
     }
 
