@@ -1,10 +1,3 @@
-
-// ---- Hard-locked Next/Try Again selector ----
-// Single source of truth; NOT user-editable.
-
-// AssessmentHelper — MC-ONLY version (GroqCloud only)
-// Removes: Ready/Reflect/Writing/Agree-Disagree logic + Cloudflare proxy.
-// Keeps: UI, animations, MC settings, Groq/OpenAI-compatible API w/ key rotation.
 (function () {
   try { console.clear(); } catch (e) {}
   console.log('[smArt] injected (MC-only)');
