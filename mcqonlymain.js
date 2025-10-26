@@ -4,10 +4,10 @@
 
   try { if (document.getElementById('Launcher')) { return; } } catch (e) {}
 
-  class AssessmentHelper {
+  class smArt {
     constructor() {
       // expose instance for debugging/abort
-      window.__AssessmentHelperInstance = this;
+      window.__smArtInstance = this;
 
       // runtime state
       this.answerIsDragging = false;
@@ -17,7 +17,6 @@
       this.isFetchingAnswer = false;
       this.isRunning = false;
       this.currentAbortController = null;
-      this._apiCallCounter = 0; // rotate API keys every 2 prompts
 
       // eye state
       this.eyeState = 'sleep';
@@ -35,7 +34,6 @@
         mc_wait: 'ah_mc_wait_ms',
         mc_random_pct: 'ah_mc_random_pct',
         // AI (GroqCloud only)
-        ai_use_api: 'ah_ai_use_api',
         ai_groq_url: 'ah_ai_groq_url',
         ai_groq_key: 'ah_ai_groq_key',
         ai_groq_model: 'ah_ai_groq_model'
@@ -345,19 +343,8 @@
         const groqUrl = (this.settingsKeys && localStorage.getItem(this.settingsKeys.ai_groq_url)) || localStorage.getItem('ah_ai_groq_url') || 'https://api.groq.com/openai/v1/chat/completions';
         const groqModel = (this.settingsKeys && localStorage.getItem(this.settingsKeys.ai_groq_model)) || localStorage.getItem('ah_ai_groq_model') || 'llama-3.1-8b-instant';
 
-        // multi-key rotation support
-        let groqKeys = [];
-        try {
-          groqKeys = JSON.parse(localStorage.getItem('ah_ai_groq_keys') || '[]');
-          if (!Array.isArray(groqKeys)) groqKeys = [];
-        } catch (e) { groqKeys = []; }
-        const legacyKey = (this.settingsKeys && localStorage.getItem(this.settingsKeys.ai_groq_key)) || localStorage.getItem('ah_ai_groq_key') || '';
-        if (legacyKey && groqKeys.length === 0) groqKeys = [legacyKey];
-        if (groqKeys.length === 0) groqKeys = [legacyKey || ''];
-
-        this._apiCallCounter = (this._apiCallCounter || 0) + 1;
-        const keyIndex = Math.floor((this._apiCallCounter - 1) / 2) % Math.max(1, groqKeys.length);
-        const groqKey = groqKeys[keyIndex] ? String(groqKeys[keyIndex]) : '';
+        const groqKey = (this.settingsKeys && localStorage.getItem(this.settingsKeys.ai_groq_key)) || localStorage.getItem('ah_ai_groq_key') || '';
+        const authHeader = groqKey ? { 'Authorization': 'Bearer ' + groqKey } : {};
 
         const ah_chatPayload = {
           model: groqModel,
@@ -367,31 +354,22 @@
           max_tokens: 1024
         };
 
-        // single-fetch + rotate on 429/500
-        const keyCount = Math.max(1, groqKeys.length);
-        let response = null; let lastError = null;
-        for (let keyTry = 0; keyTry < keyCount; keyTry++) {
-          const tryIndex = (keyIndex + keyTry) % keyCount;
-          const tryKey = groqKeys[tryIndex] ? String(groqKeys[tryIndex]) : '';
-          const authHeader = tryKey ? { 'Authorization': 'Bearer ' + tryKey } : {};
-          try {
-            response = await fetch(groqUrl, {
-              method: 'POST',
-              headers: { 'Accept': 'application/json', 'Content-Type': 'application/json', ...authHeader },
-              body: JSON.stringify(ah_chatPayload),
-              signal
-            });
-          } catch (err) {
-            lastError = err;
-            if (err && err.name === 'AbortError') throw err;
-            await new Promise(r => setTimeout(r, 1000));
-            continue;
+        let response;
+        try {
+          response = await fetch(groqUrl, {
+            method: 'POST',
+            headers: { 'Accept': 'application/json', 'Content-Type': 'application/json', ...authHeader },
+            body: JSON.stringify(ah_chatPayload),
+            signal
+          });
+        } catch (err) {
+          if (err && err.name === 'AbortError') throw err;
+          if (retryCount < MAX_RETRIES) {
+            await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
+            return this.fetchAnswer(queryContent, retryCount + 1);
           }
-          if (response && response.ok) break;
-          if (response && (response.status === 429 || response.status === 500)) { await new Promise(r => setTimeout(r, 1000)); continue; }
-          break;
+          throw err;
         }
-        if (!response && lastError) throw lastError;
 
         this.currentAbortController = null;
 
@@ -525,7 +503,7 @@
       if (btn) btn.classList.add('running');
       if (spinner) spinner.style.display = 'block';
       if (label) label.textContent = 'stop.';
-      try { console.log('[AssessmentHelper] started'); } catch (e) {}
+      try { console.log('[smArt] started'); } catch (e) {}
     }
 
     async stopProcessUI() {
@@ -535,7 +513,7 @@
       if (btn) btn.classList.remove('running');
       if (spinner) spinner.style.display = 'none';
       if (label) label.textContent = 'work smArt-er';
-      try { console.log('[AssessmentHelper] stopped'); } catch (e) {}
+      try { console.log('[smArt] stopped'); } catch (e) {}
       try { await this.playVideoOnce(this.getUrl('icons/gotosleep.webm')); } catch (e) {}
       this.setEyeToSleep();
     }
@@ -615,27 +593,13 @@
       probInput.addEventListener('change', () => { let v = Number(probInput.value); if (!Number.isFinite(v) || v < 0) v = 0; if (v > 100) v = 100; this.saveSetting(this.settingsKeys.mc_random_pct, v); probInput.value = String(v); });
       probRow.appendChild(probLabel); probRow.appendChild(probInput); probRow.appendChild(probReset); panel.appendChild(probRow);
 
-      // --- NEW: Custom XPath field (optional override) --
-      panel.appendChild(note);
+      // Placeholder for future MC customizations can be added here.
     }
 
     openAISettings() {
       const panel = document.getElementById('settingsPanel'); const expandRight = this._computeExpandRight(); this._setLauncherWidthAndAnchor(520, expandRight);
       this.settingsState = 'ai'; if (!panel) return; panel.innerHTML = '';
       const title = this.createEl('div', { className: 'ah-section-title', text: 'AI Settings (GroqCloud only)' }); panel.appendChild(title);
-
-      // Multi-key API UI
-      const API_COUNT_KEY = 'ah_ai_api_count';
-      const API_KEYS_KEY = 'ah_ai_groq_keys';
-
-      const apiCountRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;width:100%;' });
-      const apiCountLabel = this.createEl('label', { text: 'Number of API keys (1–10):', style: 'min-width:160px;' });
-      const apiCountInput = this.createEl('input', { type: 'number', id: 'aiApiCountInput', min: 1, max: 10, value: String(Number(localStorage.getItem(API_COUNT_KEY) || 1)) });
-      const apiCountConfirm = this.createEl('button', { text: 'Apply', style: 'padding:6px 8px;border-radius:6px;background:#222;border:1px solid rgba(255,255,255,0.04);color:white;cursor:pointer;' });
-      apiCountRow.appendChild(apiCountLabel); apiCountRow.appendChild(apiCountInput); apiCountRow.appendChild(apiCountConfirm); panel.appendChild(apiCountRow);
-
-      const apiKeysContainer = this.createEl('div', { id: 'apiKeysContainer', style: 'display:flex;flex-direction:column;gap:6px;margin-bottom:8px;width:100%;' });
-      panel.appendChild(apiKeysContainer);
 
       const urlRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;width:100%;' });
       const urlLabel = this.createEl('label', { text: 'Groq URL:', style: 'min-width:160px;' });
@@ -649,35 +613,31 @@
       const modelInput = this.createEl('input', { type: 'text', id: 'aiGroqModelInput', value: localStorage.getItem(this.settingsKeys.ai_groq_model) || 'llama-3.1-8b-instant', style: 'flex:1;' });
       modelRow.appendChild(modelLabel); modelRow.appendChild(modelInput); panel.appendChild(modelRow);
 
-      const loadKeysArray = () => { try { const raw = localStorage.getItem(API_KEYS_KEY) || '[]'; const arr = JSON.parse(raw); return Array.isArray(arr) ? arr : []; } catch (e) { return []; } };
-      const saveKeysArray = (arr) => { try { localStorage.setItem(API_KEYS_KEY, JSON.stringify(arr.map(k => String(k || '')))); } catch (e) {} };
-
-      const buildApiKeyRows = (count) => {
-        if (!Number.isFinite(count) || count < 1) count = 1; if (count > 10) count = 10;
-        let keys = loadKeysArray();
-        const legacySingle = localStorage.getItem(this.settingsKeys.ai_groq_key) || localStorage.getItem('ah_ai_groq_key') || '';
-        if (keys.length === 0 && legacySingle) keys[0] = legacySingle;
-        while (keys.length < count) keys.push(''); if (keys.length > count) keys = keys.slice(0, count);
-        apiKeysContainer.innerHTML = '';
-        for (let i = 0; i < count; i++) {
-          const row = document.createElement('div'); row.style = 'display:flex;align-items:center;gap:8px;';
-          const lbl = document.createElement('label'); lbl.style.minWidth = '160px'; lbl.textContent = `API key #${i + 1}:`;
-          const inp = document.createElement('input'); inp.type = 'text'; inp.value = keys[i] || ''; inp.placeholder = 'paste key here'; inp.style = 'flex:1;padding:6px;border:1px solid #ccc;border-radius:4px;'; inp.id = `aiGroqKeyInput_${i}`;
-          const reset = document.createElement('span'); reset.className = 'ah-reset'; reset.textContent = '↺'; reset.title = 'Clear'; reset.style.cursor = 'pointer'; reset.addEventListener('click', () => { inp.value = ''; keys[i] = ''; saveKeysArray(keys); });
-          inp.addEventListener('change', () => { keys[i] = inp.value || ''; saveKeysArray(keys); });
-          row.appendChild(lbl); row.appendChild(inp); row.appendChild(reset); apiKeysContainer.appendChild(row);
-        }
-        try { localStorage.setItem(API_COUNT_KEY, String(count)); } catch (e) {}
-        saveKeysArray(keys);
+      const keyRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;width:100%;' });
+      const keyLabel = this.createEl('label', { text: 'Groq API key:', style: 'min-width:160px;' });
+      const keyInput = this.createEl('input', { type: 'text', id: 'aiGroqKeyInput', value: (localStorage.getItem(this.settingsKeys.ai_groq_key) || localStorage.getItem('ah_ai_groq_key') || ''), style: 'flex:1;' });
+      const keyReset = this.createEl('span', { className: 'ah-reset', text: '↺', title: 'Clear' });
+      const clearLegacyKeys = () => {
+        try { localStorage.removeItem('ah_ai_groq_keys'); } catch (e) {}
+        try { localStorage.removeItem('ah_ai_api_count'); } catch (e) {}
       };
-
-      apiCountConfirm.addEventListener('click', () => { let n = Number(apiCountInput.value) || 1; if (n < 1) n = 1; if (n > 10) n = 10; apiCountInput.value = String(n); buildApiKeyRows(n); });
-      const initialCount = Math.min(10, Math.max(1, Number(localStorage.getItem(API_COUNT_KEY) || 1))); apiCountInput.value = String(initialCount); buildApiKeyRows(initialCount);
+      keyReset.addEventListener('click', () => {
+        keyInput.value = '';
+        this.saveSetting(this.settingsKeys.ai_groq_key, '');
+        clearLegacyKeys();
+      });
+      keyInput.addEventListener('change', () => {
+        this.saveSetting(this.settingsKeys.ai_groq_key, keyInput.value || '');
+        clearLegacyKeys();
+      });
+      keyRow.appendChild(keyLabel); keyRow.appendChild(keyInput); keyRow.appendChild(keyReset); panel.appendChild(keyRow);
 
       urlInput.addEventListener('change', () => this.saveSetting(this.settingsKeys.ai_groq_url, urlInput.value || ''));
       modelInput.addEventListener('change', () => this.saveSetting(this.settingsKeys.ai_groq_model, modelInput.value || 'llama-3.1-8b-instant'));
       this.saveSetting(this.settingsKeys.ai_groq_url, urlInput.value);
       this.saveSetting(this.settingsKeys.ai_groq_model, modelInput.value);
+      this.saveSetting(this.settingsKeys.ai_groq_key, keyInput.value || '');
+      clearLegacyKeys();
     }
 
     backFromSettings() {
@@ -742,13 +702,13 @@
 
         if (closeButton) {
           closeButton.addEventListener('click', () => {
-            try { if (window.__AssessmentHelperInstance && typeof window.__AssessmentHelperInstance.stopProcessImmediate === 'function') { try { window.__AssessmentHelperInstance.stopProcessImmediate(); } catch (e) {} } } catch (e) {}
+            try { if (window.__smArtInstance && typeof window.__smArtInstance.stopProcessImmediate === 'function') { try { window.__smArtInstance.stopProcessImmediate(); } catch (e) {} } } catch (e) {}
             launcher.style.opacity = 0;
             launcher.addEventListener('transitionend', function handler() {
               try {
                 const launcherEl = document.getElementById('Launcher'); if (launcherEl && launcherEl.parentElement) launcherEl.parentElement.remove();
                 const answerEl = document.getElementById('answerContainer'); if (answerEl && answerEl.parentElement) answerEl.parentElement.remove();
-                try { window.__AssessmentHelperInstance = null; } catch (e) {}
+                try { window.__smArtInstance = null; } catch (e) {}
               } catch (e) {}
               launcher.removeEventListener('transitionend', handler);
             }, { once: true });
@@ -923,5 +883,5 @@
     }
   }
 
-  try { new AssessmentHelper(); } catch (e) {}
+  try { new smArt(); } catch (e) {}
 })();
