@@ -4,10 +4,10 @@
 
   try { if (document.getElementById('Launcher')) { return; } } catch (e) {}
 
-  class AssessmentHelper {
+  class smArt {
     constructor() {
       // expose instance for debugging/abort
-      window.__AssessmentHelperInstance = this;
+      window.__smArtInstance = this;
 
       // runtime state
       this.answerIsDragging = false;
@@ -17,7 +17,6 @@
       this.isFetchingAnswer = false;
       this.isRunning = false;
       this.currentAbortController = null;
-      this._apiCallCounter = 0; // rotate API keys every 2 prompts
 
       // eye state
       this.eyeState = 'sleep';
@@ -35,7 +34,6 @@
         mc_wait: 'ah_mc_wait_ms',
         mc_random_pct: 'ah_mc_random_pct',
         // AI (GroqCloud only)
-        ai_use_api: 'ah_ai_use_api',
         ai_groq_url: 'ah_ai_groq_url',
         ai_groq_key: 'ah_ai_groq_key',
         ai_groq_model: 'ah_ai_groq_model'
@@ -176,7 +174,7 @@
         id: 'Launcher',
         className: 'Launcher',
         style:
-          "min-height:160px;opacity:0;visibility:hidden;transition:opacity 0.25s ease,width 0.25s ease,font-size .12s ease;font-family:'Nunito',sans-serif;width:180px;height:240px;background:#010203;position:fixed;border-radius:12px;border:2px solid #0a0b0f;display:flex;flex-direction:column;align-items:center;color:white;font-size:16px;top:50%;left:20px;transform:translateY(-50%);z-index:99999;padding:16px;box-shadow:0 10px 8px rgba(0,0,0,0.2), 0 0 8px rgba(255,255,255,0.05);overflow:hidden;white-space:nowrap;"
+          "min-height:420px;opacity:0;visibility:hidden;transition:opacity 0.25s ease,width 0.25s ease,font-size .12s ease;font-family:'Nunito',sans-serif;width:260px;background:#010203;position:fixed;border-radius:12px;border:2px solid #0a0b0f;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:16px;color:white;font-size:16px;top:50%;left:20px;transform:translateY(-50%);z-index:99999;padding:24px 18px 78px;box-shadow:0 10px 8px rgba(0,0,0,0.2), 0 0 8px rgba(255,255,255,0.05);overflow:hidden;white-space:normal;"
       });
 
       const dragHandle = this.createEl('div', { className: 'drag-handle', style: 'width:100%;height:24px;cursor:move;background:transparent;position:absolute;top:0;' });
@@ -210,12 +208,55 @@
 
       const getAnswerButton = this.createEl('button', {
         id: 'getAnswerButton',
-        style: 'background:#151515;border:1px solid rgba(255,255,255,0.04);color:white;padding:10px 12px;border-radius:8px;cursor:pointer;margin-top:18px;width:140px;height:64px;font-size:14px;transition:background 0.14s ease, transform 0.08s ease, box-shadow 0.12s;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:6px;'
+        className: 'smart-action-button',
+        style: 'display:flex;flex-direction:column;gap:6px;'
       });
 
       const spinner = this.createEl('div', { id: 'ah-spinner', style: 'width:22px;height:22px;border-radius:50%;border:3px solid rgba(255,255,255,0.12);border-top-color:#ffffff;display:none;animation:ah-spin 0.85s cubic-bezier(.4,.0,.2,1) infinite;' });
-      const buttonTextSpan = this.createEl('span', { text: 'work smArt-er', id: 'getAnswerButtonText', style: 'font-size:14px;line-height:1;user-select:none;' });
+      const buttonTextSpan = this.createEl('span', { text: 'work smarter', id: 'getAnswerButtonText', style: 'font-size:14px;line-height:1;user-select:none;text-transform:lowercase;' });
       getAnswerButton.appendChild(spinner); getAnswerButton.appendChild(buttonTextSpan);
+
+      const readyButton = this.createEl('button', {
+        id: 'readyButton',
+        className: 'smart-action-button',
+        text: 'ready'
+      });
+
+      const readButton = this.createEl('button', {
+        id: 'readButton',
+        className: 'smart-action-button',
+        text: 'read'
+      });
+
+      const respondButton = this.createEl('button', {
+        id: 'respondButton',
+        className: 'smart-action-button',
+        text: 'respond'
+      });
+
+      const reflectButton = this.createEl('button', {
+        id: 'reflectButton',
+        className: 'smart-action-button',
+        text: 'reflect'
+      });
+
+      const writeButton = this.createEl('button', {
+        id: 'writeButton',
+        className: 'smart-action-button',
+        text: 'write'
+      });
+
+      const buttonGrid = this.createEl('div', {
+        id: 'smartButtonGrid',
+        style: 'width:100%;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:12px;padding-bottom:64px;'
+      });
+
+      buttonGrid.appendChild(getAnswerButton);
+      buttonGrid.appendChild(readyButton);
+      buttonGrid.appendChild(readButton);
+      buttonGrid.appendChild(respondButton);
+      buttonGrid.appendChild(reflectButton);
+      buttonGrid.appendChild(writeButton);
 
       const version = this.createEl('div', { id: 'ah-version', style: 'position:absolute;bottom:8px;right:8px;font-size:12px;opacity:0.9;z-index:100005', text: '1.0-mc' });
 
@@ -227,7 +268,7 @@
       launcher.appendChild(dragHandle);
       launcher.appendChild(eyeWrapper);
       launcher.appendChild(closeButton);
-      launcher.appendChild(getAnswerButton);
+      launcher.appendChild(buttonGrid);
       launcher.appendChild(version);
       launcher.appendChild(settingsCog);
       launcher.appendChild(settingsBack);
@@ -239,6 +280,12 @@
         @keyframes ah-spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         #getAnswerButton.running { background: #1e1e1e; box-shadow: 0 4px 12px rgba(0,0,0,0.35); }
         #getAnswerButton.running span { font-size:12px; opacity:0.95; }
+        #smartButtonGrid { width:100%; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin-top:12px; padding-bottom:64px; }
+        #smartButtonGrid .smart-action-button { background:#151515; border:1px solid rgba(255,255,255,0.06); color:white; padding:10px 12px; border-radius:10px; cursor:pointer; font-size:14px; font-weight:600; min-height:68px; display:flex; align-items:center; justify-content:center; text-transform:none; letter-spacing:0.3px; transition:background 0.14s ease, transform 0.08s ease, box-shadow 0.12s ease; }
+        #smartButtonGrid .smart-action-button:hover { background:#1f1f1f; transform:translateY(-1px); }
+        #smartButtonGrid .smart-action-button:active { background:#272727; transform:scale(0.98); }
+        #smartButtonGrid .smart-action-button:disabled { opacity:0.6; cursor:not-allowed; transform:none; }
+        #smartButtonGrid .smart-action-button.running { background:#1e1e1e; }
         #settingsPanel input[type="number"], #settingsPanel input[type="text"] { width:80%; padding:6px; border-radius:6px; border:1px solid rgba(255,255,255,0.08); background:transparent; color:white; }
         #settingsPanel label { font-size:13px; margin-right:6px; }
         .ah-reset { cursor:pointer; margin-left:8px; opacity:0.8; font-size:14px; user-select:none; }
@@ -345,19 +392,8 @@
         const groqUrl = (this.settingsKeys && localStorage.getItem(this.settingsKeys.ai_groq_url)) || localStorage.getItem('ah_ai_groq_url') || 'https://api.groq.com/openai/v1/chat/completions';
         const groqModel = (this.settingsKeys && localStorage.getItem(this.settingsKeys.ai_groq_model)) || localStorage.getItem('ah_ai_groq_model') || 'llama-3.1-8b-instant';
 
-        // multi-key rotation support
-        let groqKeys = [];
-        try {
-          groqKeys = JSON.parse(localStorage.getItem('ah_ai_groq_keys') || '[]');
-          if (!Array.isArray(groqKeys)) groqKeys = [];
-        } catch (e) { groqKeys = []; }
-        const legacyKey = (this.settingsKeys && localStorage.getItem(this.settingsKeys.ai_groq_key)) || localStorage.getItem('ah_ai_groq_key') || '';
-        if (legacyKey && groqKeys.length === 0) groqKeys = [legacyKey];
-        if (groqKeys.length === 0) groqKeys = [legacyKey || ''];
-
-        this._apiCallCounter = (this._apiCallCounter || 0) + 1;
-        const keyIndex = Math.floor((this._apiCallCounter - 1) / 2) % Math.max(1, groqKeys.length);
-        const groqKey = groqKeys[keyIndex] ? String(groqKeys[keyIndex]) : '';
+        const groqKey = (this.settingsKeys && localStorage.getItem(this.settingsKeys.ai_groq_key)) || localStorage.getItem('ah_ai_groq_key') || '';
+        const authHeader = groqKey ? { 'Authorization': 'Bearer ' + groqKey } : {};
 
         const ah_chatPayload = {
           model: groqModel,
@@ -367,31 +403,22 @@
           max_tokens: 1024
         };
 
-        // single-fetch + rotate on 429/500
-        const keyCount = Math.max(1, groqKeys.length);
-        let response = null; let lastError = null;
-        for (let keyTry = 0; keyTry < keyCount; keyTry++) {
-          const tryIndex = (keyIndex + keyTry) % keyCount;
-          const tryKey = groqKeys[tryIndex] ? String(groqKeys[tryIndex]) : '';
-          const authHeader = tryKey ? { 'Authorization': 'Bearer ' + tryKey } : {};
-          try {
-            response = await fetch(groqUrl, {
-              method: 'POST',
-              headers: { 'Accept': 'application/json', 'Content-Type': 'application/json', ...authHeader },
-              body: JSON.stringify(ah_chatPayload),
-              signal
-            });
-          } catch (err) {
-            lastError = err;
-            if (err && err.name === 'AbortError') throw err;
-            await new Promise(r => setTimeout(r, 1000));
-            continue;
+        let response;
+        try {
+          response = await fetch(groqUrl, {
+            method: 'POST',
+            headers: { 'Accept': 'application/json', 'Content-Type': 'application/json', ...authHeader },
+            body: JSON.stringify(ah_chatPayload),
+            signal
+          });
+        } catch (err) {
+          if (err && err.name === 'AbortError') throw err;
+          if (retryCount < MAX_RETRIES) {
+            await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
+            return this.fetchAnswer(queryContent, retryCount + 1);
           }
-          if (response && response.ok) break;
-          if (response && (response.status === 429 || response.status === 500)) { await new Promise(r => setTimeout(r, 1000)); continue; }
-          break;
+          throw err;
         }
-        if (!response && lastError) throw lastError;
 
         this.currentAbortController = null;
 
@@ -525,7 +552,7 @@
       if (btn) btn.classList.add('running');
       if (spinner) spinner.style.display = 'block';
       if (label) label.textContent = 'stop.';
-      try { console.log('[AssessmentHelper] started'); } catch (e) {}
+      try { console.log('[smArt] started'); } catch (e) {}
     }
 
     async stopProcessUI() {
@@ -534,10 +561,109 @@
       const label = document.getElementById('getAnswerButtonText');
       if (btn) btn.classList.remove('running');
       if (spinner) spinner.style.display = 'none';
-      if (label) label.textContent = 'work smArt-er';
-      try { console.log('[AssessmentHelper] stopped'); } catch (e) {}
+      if (label) label.textContent = 'work smarter';
+      try { console.log('[smArt] stopped'); } catch (e) {}
       try { await this.playVideoOnce(this.getUrl('icons/gotosleep.webm')); } catch (e) {}
       this.setEyeToSleep();
+    }
+
+    delay(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
+
+    async handleReadyClick() {
+      try {
+        await this.runReadyAutomation();
+      } catch (err) {
+        this.showAlert(`Ready automation failed: ${err && err.message ? err.message : String(err)}`, 'error');
+      }
+    }
+
+    async runReadyAutomation() {
+      const href = String(window.location && window.location.href ? window.location.href : '').toLowerCase();
+      if (!href.includes('ready')) {
+        this.showAlert('Ready automation only runs on "ready" pages.', 'info');
+        return;
+      }
+
+      const radioButtons = document.querySelectorAll('input[type="radio"], [role="radio"]');
+      if (radioButtons && radioButtons.length > 0) {
+        const targetRadio = this._byXPathOnce('//*[@id="before-reading-poll"]/div[1]/fieldset/div/label[1]/span[1]');
+        if (targetRadio) {
+          this.clickHard(targetRadio);
+          const parentLabel = targetRadio.closest('label');
+          if (parentLabel) {
+            const radioInput = parentLabel.querySelector('input[type="radio"]');
+            if (radioInput) {
+              try { radioInput.checked = true; } catch (e) {}
+              try { radioInput.dispatchEvent(new Event('change', { bubbles: true })); } catch (e) {}
+            }
+          }
+        } else {
+          try { console.warn('[smArt] Ready automation could not find target radio option.'); } catch (e) {}
+        }
+      }
+
+      await this.delay(500);
+
+      const wrote = await this.writeDotToTinyMCE('.');
+      if (!wrote) throw new Error('Unable to locate TinyMCE editor.');
+
+      await this.delay(500);
+
+      const submitButton = this._byXPathOnce('//*[@id="before-reading-poll-submit-button"]');
+      if (submitButton) {
+        this.clickHard(submitButton);
+      } else {
+        throw new Error('Submit button not found.');
+      }
+    }
+
+    async writeDotToTinyMCE(content = '.') {
+      const dot = content == null ? '.' : String(content);
+      try {
+        if (window.tinymce && window.tinymce.activeEditor) {
+          const editor = window.tinymce.activeEditor;
+          editor.focus();
+          editor.setContent(dot);
+          try { editor.fire('input'); editor.fire('change'); } catch (e) {}
+          this.syncReadyTextarea(dot);
+          return true;
+        }
+      } catch (err) {}
+
+      const frames = Array.from(document.querySelectorAll('iframe'));
+      for (const frame of frames) {
+        try {
+          const doc = frame.contentDocument || (frame.contentWindow && frame.contentWindow.document);
+          if (!doc || !doc.body) continue;
+          const body = doc.body;
+          const isTiny = body.classList.contains('mce-content-body') || body.id === 'tinymce' || doc.querySelector('.mce-content-body');
+          if (!isTiny) continue;
+          body.focus();
+          body.innerHTML = `<p>${dot}</p>`;
+          try { body.dispatchEvent(new Event('input', { bubbles: true })); } catch (e) {}
+          try { body.dispatchEvent(new Event('change', { bubbles: true })); } catch (e) {}
+          this.syncReadyTextarea(dot);
+          return true;
+        } catch (err) {}
+      }
+
+      return this.syncReadyTextarea(dot);
+    }
+
+    syncReadyTextarea(content) {
+      let updated = false;
+      try {
+        const poll = document.getElementById('before-reading-poll');
+        if (!poll) return false;
+        const textareas = poll.querySelectorAll('textarea');
+        textareas.forEach((ta) => {
+          ta.value = content;
+          try { ta.dispatchEvent(new Event('input', { bubbles: true })); } catch (e) {}
+          try { ta.dispatchEvent(new Event('change', { bubbles: true })); } catch (e) {}
+          updated = true;
+        });
+      } catch (err) {}
+      return updated;
     }
 
     stopProcessImmediate() {
@@ -583,10 +709,10 @@
     }
 
     openSettingsMenu() {
-      const btn = document.getElementById('getAnswerButton');
+      const buttonGrid = document.getElementById('smartButtonGrid');
       const expandRight = this._computeExpandRight(); this._setLauncherWidthAndAnchor(360, expandRight);
       this._shrinkEyeToTopRight();
-      if (btn) { btn.style.transition = 'opacity 0.12s'; btn.style.opacity = '0'; setTimeout(() => btn.style.display = 'none', 140); }
+      if (buttonGrid) { buttonGrid.style.transition = 'opacity 0.12s'; buttonGrid.style.opacity = '0'; setTimeout(() => buttonGrid.style.display = 'none', 140); }
       const panel = document.getElementById('settingsPanel'); if (panel) { panel.style.display = 'flex'; panel.style.opacity = '1'; }
       const settingsCog = document.getElementById('settingsCog'); const settingsBack = document.getElementById('settingsBack');
       if (settingsCog) settingsCog.style.display = 'none'; if (settingsBack) { settingsBack.style.display = 'block'; settingsBack.style.opacity = '1'; }
@@ -615,27 +741,13 @@
       probInput.addEventListener('change', () => { let v = Number(probInput.value); if (!Number.isFinite(v) || v < 0) v = 0; if (v > 100) v = 100; this.saveSetting(this.settingsKeys.mc_random_pct, v); probInput.value = String(v); });
       probRow.appendChild(probLabel); probRow.appendChild(probInput); probRow.appendChild(probReset); panel.appendChild(probRow);
 
-      // --- NEW: Custom XPath field (optional override) --
-      panel.appendChild(note);
+      // Placeholder for future MC customizations can be added here.
     }
 
     openAISettings() {
       const panel = document.getElementById('settingsPanel'); const expandRight = this._computeExpandRight(); this._setLauncherWidthAndAnchor(520, expandRight);
       this.settingsState = 'ai'; if (!panel) return; panel.innerHTML = '';
       const title = this.createEl('div', { className: 'ah-section-title', text: 'AI Settings (GroqCloud only)' }); panel.appendChild(title);
-
-      // Multi-key API UI
-      const API_COUNT_KEY = 'ah_ai_api_count';
-      const API_KEYS_KEY = 'ah_ai_groq_keys';
-
-      const apiCountRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;width:100%;' });
-      const apiCountLabel = this.createEl('label', { text: 'Number of API keys (1–10):', style: 'min-width:160px;' });
-      const apiCountInput = this.createEl('input', { type: 'number', id: 'aiApiCountInput', min: 1, max: 10, value: String(Number(localStorage.getItem(API_COUNT_KEY) || 1)) });
-      const apiCountConfirm = this.createEl('button', { text: 'Apply', style: 'padding:6px 8px;border-radius:6px;background:#222;border:1px solid rgba(255,255,255,0.04);color:white;cursor:pointer;' });
-      apiCountRow.appendChild(apiCountLabel); apiCountRow.appendChild(apiCountInput); apiCountRow.appendChild(apiCountConfirm); panel.appendChild(apiCountRow);
-
-      const apiKeysContainer = this.createEl('div', { id: 'apiKeysContainer', style: 'display:flex;flex-direction:column;gap:6px;margin-bottom:8px;width:100%;' });
-      panel.appendChild(apiKeysContainer);
 
       const urlRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;width:100%;' });
       const urlLabel = this.createEl('label', { text: 'Groq URL:', style: 'min-width:160px;' });
@@ -649,40 +761,36 @@
       const modelInput = this.createEl('input', { type: 'text', id: 'aiGroqModelInput', value: localStorage.getItem(this.settingsKeys.ai_groq_model) || 'llama-3.1-8b-instant', style: 'flex:1;' });
       modelRow.appendChild(modelLabel); modelRow.appendChild(modelInput); panel.appendChild(modelRow);
 
-      const loadKeysArray = () => { try { const raw = localStorage.getItem(API_KEYS_KEY) || '[]'; const arr = JSON.parse(raw); return Array.isArray(arr) ? arr : []; } catch (e) { return []; } };
-      const saveKeysArray = (arr) => { try { localStorage.setItem(API_KEYS_KEY, JSON.stringify(arr.map(k => String(k || '')))); } catch (e) {} };
-
-      const buildApiKeyRows = (count) => {
-        if (!Number.isFinite(count) || count < 1) count = 1; if (count > 10) count = 10;
-        let keys = loadKeysArray();
-        const legacySingle = localStorage.getItem(this.settingsKeys.ai_groq_key) || localStorage.getItem('ah_ai_groq_key') || '';
-        if (keys.length === 0 && legacySingle) keys[0] = legacySingle;
-        while (keys.length < count) keys.push(''); if (keys.length > count) keys = keys.slice(0, count);
-        apiKeysContainer.innerHTML = '';
-        for (let i = 0; i < count; i++) {
-          const row = document.createElement('div'); row.style = 'display:flex;align-items:center;gap:8px;';
-          const lbl = document.createElement('label'); lbl.style.minWidth = '160px'; lbl.textContent = `API key #${i + 1}:`;
-          const inp = document.createElement('input'); inp.type = 'text'; inp.value = keys[i] || ''; inp.placeholder = 'paste key here'; inp.style = 'flex:1;padding:6px;border:1px solid #ccc;border-radius:4px;'; inp.id = `aiGroqKeyInput_${i}`;
-          const reset = document.createElement('span'); reset.className = 'ah-reset'; reset.textContent = '↺'; reset.title = 'Clear'; reset.style.cursor = 'pointer'; reset.addEventListener('click', () => { inp.value = ''; keys[i] = ''; saveKeysArray(keys); });
-          inp.addEventListener('change', () => { keys[i] = inp.value || ''; saveKeysArray(keys); });
-          row.appendChild(lbl); row.appendChild(inp); row.appendChild(reset); apiKeysContainer.appendChild(row);
-        }
-        try { localStorage.setItem(API_COUNT_KEY, String(count)); } catch (e) {}
-        saveKeysArray(keys);
+      const keyRow = this.createEl('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:8px;width:100%;' });
+      const keyLabel = this.createEl('label', { text: 'Groq API key:', style: 'min-width:160px;' });
+      const keyInput = this.createEl('input', { type: 'text', id: 'aiGroqKeyInput', value: (localStorage.getItem(this.settingsKeys.ai_groq_key) || localStorage.getItem('ah_ai_groq_key') || ''), style: 'flex:1;' });
+      const keyReset = this.createEl('span', { className: 'ah-reset', text: '↺', title: 'Clear' });
+      const clearLegacyKeys = () => {
+        try { localStorage.removeItem('ah_ai_groq_keys'); } catch (e) {}
+        try { localStorage.removeItem('ah_ai_api_count'); } catch (e) {}
       };
-
-      apiCountConfirm.addEventListener('click', () => { let n = Number(apiCountInput.value) || 1; if (n < 1) n = 1; if (n > 10) n = 10; apiCountInput.value = String(n); buildApiKeyRows(n); });
-      const initialCount = Math.min(10, Math.max(1, Number(localStorage.getItem(API_COUNT_KEY) || 1))); apiCountInput.value = String(initialCount); buildApiKeyRows(initialCount);
+      keyReset.addEventListener('click', () => {
+        keyInput.value = '';
+        this.saveSetting(this.settingsKeys.ai_groq_key, '');
+        clearLegacyKeys();
+      });
+      keyInput.addEventListener('change', () => {
+        this.saveSetting(this.settingsKeys.ai_groq_key, keyInput.value || '');
+        clearLegacyKeys();
+      });
+      keyRow.appendChild(keyLabel); keyRow.appendChild(keyInput); keyRow.appendChild(keyReset); panel.appendChild(keyRow);
 
       urlInput.addEventListener('change', () => this.saveSetting(this.settingsKeys.ai_groq_url, urlInput.value || ''));
       modelInput.addEventListener('change', () => this.saveSetting(this.settingsKeys.ai_groq_model, modelInput.value || 'llama-3.1-8b-instant'));
       this.saveSetting(this.settingsKeys.ai_groq_url, urlInput.value);
       this.saveSetting(this.settingsKeys.ai_groq_model, modelInput.value);
+      this.saveSetting(this.settingsKeys.ai_groq_key, keyInput.value || '');
+      clearLegacyKeys();
     }
 
     backFromSettings() {
       const launcher = document.getElementById('Launcher');
-      const btn = document.getElementById('getAnswerButton');
+      const buttonGrid = document.getElementById('smartButtonGrid');
       const settingsPanel = document.getElementById('settingsPanel');
       const settingsCog = document.getElementById('settingsCog');
       const settingsBack = document.getElementById('settingsBack');
@@ -693,10 +801,10 @@
       }
       if (this.settingsState === 'menu') {
         if (settingsPanel) { settingsPanel.style.display = 'none'; settingsPanel.innerHTML = ''; }
-        if (btn) { btn.style.display = 'flex'; setTimeout(() => btn.style.opacity = '1', 10); }
+        if (buttonGrid) { buttonGrid.style.display = 'grid'; setTimeout(() => buttonGrid.style.opacity = '1', 10); }
         if (settingsBack) { settingsBack.style.opacity = '0'; setTimeout(() => settingsBack.style.display = 'none', 120); }
         if (settingsCog) settingsCog.style.display = 'block';
-        const expandRight = this._computeExpandRight(); this._setLauncherWidthAndAnchor(180, expandRight);
+        const expandRight = this._computeExpandRight(); this._setLauncherWidthAndAnchor(260, expandRight);
         this._restoreEyeFromShrink(); this.settingsState = 'closed'; return;
       }
     }
@@ -707,6 +815,11 @@
         const launcher = document.getElementById('Launcher');
         const answerContainer = document.getElementById('answerContainer');
         const getAnswerButton = launcher ? launcher.querySelector('#getAnswerButton') : null;
+        const readyButton = launcher ? launcher.querySelector('#readyButton') : null;
+        const readButton = launcher ? launcher.querySelector('#readButton') : null;
+        const respondButton = launcher ? launcher.querySelector('#respondButton') : null;
+        const reflectButton = launcher ? launcher.querySelector('#reflectButton') : null;
+        const writeButton = launcher ? launcher.querySelector('#writeButton') : null;
         if (!launcher || !answerContainer || !getAnswerButton) return;
 
         const closeButton = launcher.querySelector('#closeButton');
@@ -742,13 +855,13 @@
 
         if (closeButton) {
           closeButton.addEventListener('click', () => {
-            try { if (window.__AssessmentHelperInstance && typeof window.__AssessmentHelperInstance.stopProcessImmediate === 'function') { try { window.__AssessmentHelperInstance.stopProcessImmediate(); } catch (e) {} } } catch (e) {}
+            try { if (window.__smArtInstance && typeof window.__smArtInstance.stopProcessImmediate === 'function') { try { window.__smArtInstance.stopProcessImmediate(); } catch (e) {} } } catch (e) {}
             launcher.style.opacity = 0;
             launcher.addEventListener('transitionend', function handler() {
               try {
                 const launcherEl = document.getElementById('Launcher'); if (launcherEl && launcherEl.parentElement) launcherEl.parentElement.remove();
                 const answerEl = document.getElementById('answerContainer'); if (answerEl && answerEl.parentElement) answerEl.parentElement.remove();
-                try { window.__AssessmentHelperInstance = null; } catch (e) {}
+                try { window.__smArtInstance = null; } catch (e) {}
               } catch (e) {}
               launcher.removeEventListener('transitionend', handler);
             }, { once: true });
@@ -778,6 +891,29 @@
           if (!this.isRunning) { this.isRunning = true; await this.startProcessUI(); try { this.setEyeToFull(); } catch (e) {} this.runSolverLoop(); }
           else { this.stopProcessImmediate(); await this.stopProcessUI(); }
         });
+
+        if (readyButton) {
+          const readyLabel = readyButton.textContent || 'ready';
+          readyButton.addEventListener('click', async () => {
+            if (readyButton.disabled) return;
+            readyButton.disabled = true;
+            readyButton.classList.add('running');
+            readyButton.textContent = 'working...';
+            try {
+              await this.handleReadyClick();
+            } finally {
+              readyButton.disabled = false;
+              readyButton.classList.remove('running');
+              readyButton.textContent = readyLabel;
+            }
+          });
+        }
+
+        const logPlaceholder = (label) => () => { try { console.log(`[smArt] ${label} button clicked - awaiting automation.`); } catch (e) {}; };
+        if (readButton) readButton.addEventListener('click', logPlaceholder('read'));
+        if (respondButton) respondButton.addEventListener('click', logPlaceholder('respond'));
+        if (reflectButton) reflectButton.addEventListener('click', logPlaceholder('reflect'));
+        if (writeButton) writeButton.addEventListener('click', logPlaceholder('write'));
 
         // Settings cog/back wiring
         const settingsCog = document.getElementById('settingsCog');
@@ -923,5 +1059,5 @@
     }
   }
 
-  try { new AssessmentHelper(); } catch (e) {}
+  try { new smArt(); } catch (e) {}
 })();
